@@ -123,7 +123,28 @@ if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
 install(TARGETS visa_plugin
-  LIBRARY DESTINATION lib/instrument-plugins
-  RUNTIME DESTINATION bin/instrument-plugins
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/instrument-plugins
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}/instrument-plugins
+)
+
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/visa-plugin-config-version.cmake"
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY AnyNewerVersion
+)
+
+configure_package_config_file(
+  cmake/visa-plugin-config.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/visa-plugin-config.cmake"
+  INSTALL_DESTINATION ${CMAKE_INSTALL_DATADIR}/visa-plugin
+)
+
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/visa-plugin-config.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/visa-plugin-config-version.cmake"
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/visa-plugin
 )

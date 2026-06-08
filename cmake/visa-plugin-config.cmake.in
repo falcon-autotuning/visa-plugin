@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+# Directory(VISA_PLUGIN_DIR "@PACKAGE_CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_LIBDIR@/instrument-plugins")# Directory where plugins are installed
+
+# Plugin filename (no prefix on Linux due to MODULE config)
+set(VISA_PLUGIN_NAME "visa_plugin")
+
+# Full path convenience
+set(VISA_PLUGIN_PATH "${VISA_PLUGIN_DIR}/${VISA_PLUGIN_NAME}")
+
