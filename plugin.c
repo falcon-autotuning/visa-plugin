@@ -12,6 +12,9 @@
 // VISA
 #include <visa.h>
 
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#endif
 #define MAX_READ_SIZE (1024 * 1024)
 #define VISA_LOG_INFO(fmt, ...) LOG_INFO("Plugin", "VISA", fmt, ##__VA_ARGS__)
 #define VISA_LOG_DEBUG(fmt, ...) LOG_DEBUG("Plugin", "VISA", fmt, ##__VA_ARGS__)
