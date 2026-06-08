@@ -45,11 +45,11 @@ PluginMetadata plugin_get_metadata(void) {
   PluginMetadata meta = {0};
   meta.api_version = INSTRUMENT_PLUGIN_API_VERSION;
 
-  strncpy(meta.name, "NI-VISA Plugin", PLUGIN_MAX_STRING_LEN - 1);
-  strncpy(meta.version, "2.0.0", PLUGIN_MAX_STRING_LEN - 1);
-  strncpy(meta.protocol_type, "VISA", PLUGIN_MAX_STRING_LEN - 1);
-  strncpy(meta.description, "NI VISA driver with shared-memory buffer support",
-          PLUGIN_MAX_STRING_LEN - 1);
+  snprintf(meta.name, PLUGIN_MAX_STRING_LEN, "%s", "NI-VISA Plugin");
+  snprintf(meta.version, PLUGIN_MAX_STRING_LEN, "%s", "2.0.0");
+  snprintf(meta.protocol_type, PLUGIN_MAX_STRING_LEN, "%s", "VISA");
+  snprintf(meta.description, PLUGIN_MAX_STRING_LEN, "%s",
+           "NI VISA driver with shared-memory buffer support");
   VISA_LOG_DEBUG("Got the metadata for the VISA plugin\n");
   return meta;
 }
@@ -70,7 +70,8 @@ int32_t plugin_initialize(const PluginConfig *config) {
     return -1;
   }
 
-  strncpy(g_state.resource_address, addr, PLUGIN_MAX_STRING_LEN - 1);
+  snprintf(g_state.resource_address, sizeof(g_state.resource_address), "%s",
+           addr);
   g_state.timeout_ms = get_json_int(conn, "timeout", 5000);
   VISA_LOG_DEBUG(
       "The selected timeout for the instrument in milliseonds is %d\n",
@@ -79,13 +80,17 @@ int32_t plugin_initialize(const PluginConfig *config) {
   const char *term = get_json_string(conn, "termination", "\\n");
   VISA_LOG_DEBUG("The selected termination for the instrument is %s\n", term);
   if (strcmp(term, "\\n") == 0)
-    strcpy(g_state.termination_char, "\n");
+    snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
+             "\n");
   else if (strcmp(term, "\\r") == 0)
-    strcpy(g_state.termination_char, "\r");
+    snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
+             "\r");
   else if (strcmp(term, "\\r\\n") == 0)
-    strcpy(g_state.termination_char, "\r\n");
+    snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
+             "\r\n");
   else
-    strncpy(g_state.termination_char, term, 3);
+    snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
+             term);
 
   cJSON_Delete(conn);
 
@@ -171,7 +176,8 @@ static int parse_and_fill_response(const PluginCommand *cmd,
 
     if (!buf_id || !shm_ptr) {
       VISA_LOG_ERROR("Buffer allocation failed (%zu)", est);
-      strcpy(resp->error_message, "buffer alloc failed");
+      snprintf(resp->error_message, sizeof(resp->error_message), "%s",
+               "buffer alloc failed");
       resp->success = false;
       return -1;
     }
@@ -180,7 +186,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
     size_t count = parse_float_array(buffer, out, est);
 
     resp->has_large_data = true;
-    strncpy(resp->data_buffer_id, buf_id, PLUGIN_MAX_STRING_LEN - 1);
+    snprintf(resp->data_buffer_id, sizeof(resp->data_buffer_id), "%s", buf_id);
     resp->data_element_count = count;
     resp->data_type = INST_DATA_FLOAT32;
 
@@ -224,11 +230,12 @@ static int parse_and_fill_response(const PluginCommand *cmd,
   }
 
   resp->return_value.type = PARAM_TYPE_STRING;
-  strncpy(resp->return_value.value.str_val, buffer, PLUGIN_MAX_STRING_LEN - 1);
+  snprintf(resp->return_value.value.str_val,
+           sizeof(resp->return_value.value.str_val), "%s", buffer);
 
 done:
 
-  strncpy(resp->text_response, buffer, PLUGIN_MAX_PAYLOAD - 1);
+  snprintf(resp->text_response, sizeof(resp->text_response), "%s", buffer);
   resp->success = true;
 
   VISA_LOG_DEBUG("Scalar parsed: '%s'", buffer);
@@ -239,16 +246,18 @@ done:
 int32_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
 
   memset(resp, 0, sizeof(PluginResponse));
-  strncpy(resp->command_id, cmd->id, PLUGIN_MAX_STRING_LEN - 1);
-  strncpy(resp->instrument_name, cmd->instrument_name,
-          PLUGIN_MAX_STRING_LEN - 1);
+  snprintf(resp->command_id, sizeof(resp->command_id), "%s", cmd->id);
+
+  snprintf(resp->instrument_name, sizeof(resp->instrument_name), "%s",
+           cmd->instrument_name);
 
   resp->return_value.type = PARAM_TYPE_NONE;
 
   if (!g_state.initialized) {
     resp->success = false;
     VISA_LOG_ERROR("Not initialized VISA plugin");
-    strcpy(resp->error_message, "Not initialized");
+    snprintf(resp->error_message, sizeof(resp->error_message), "%s",
+             "Not initialized");
     return -1;
   }
 
@@ -264,7 +273,8 @@ int32_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   if (write_status < VI_SUCCESS) {
     resp->success = false;
     VISA_LOG_ERROR("Write failed: 0x%08X", write_status);
-    strcpy(resp->error_message, "VISA write failed");
+    snprintf(resp->error_message, sizeof(resp->error_message), "%s",
+             "VISA write failed");
     return -1;
   }
   if (!cmd->expects_response) {
@@ -281,7 +291,8 @@ int32_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
     rc = parse_and_fill_response(cmd, resp, buffer, read_len);
   } else {
     resp->success = false;
-    strcpy(resp->error_message, "VISA read failed");
+    snprintf(resp->error_message, sizeof(resp->error_message), "%s",
+             "VISA read failed");
   }
 
   free(buffer);
