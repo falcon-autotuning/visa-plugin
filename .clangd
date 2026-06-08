@@ -1,0 +1,34 @@
+If:
+  PathMatch: \.(c|h)$
+CompileFlags:
+  Add:
+    - -std=c99
+    - -Wall
+    - -Wextra
+    - -Wpedantic
+    - -Wshadow
+    - -Wconversion
+    - -Wstrict-prototypes
+    - -Wmissing-prototypes
+    - -I./include
+    - -I./src/internal/
+    - -I./vcpkg_installed/x64-linux-dynamic/include
+
+Diagnostics:
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - performance-*
+      - portability-*
+      - readability-*
+      - misc-*
+      - clang-analyzer-*
+      - cert-*
+
+    Remove:
+      # Remove noisy / irrelevant checks
+      - readability-identifier-length
+      - readability-magic-numbers
+      - misc-unused-parameters
+
+  UnusedIncludes: Strict
