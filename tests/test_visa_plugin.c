@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include <cmocka.h>
 #include <instrument-plugin.h>
@@ -11,9 +12,9 @@ void visa_stub_set_response(const char *resp);
 static PluginCommand make_cmd(const char *verb, bool expects_response) {
   PluginCommand cmd = {0};
 
-  strncpy(cmd.id, "test-cmd", PLUGIN_MAX_STRING_LEN);
-  strncpy(cmd.instrument_name, "test-instr", PLUGIN_MAX_STRING_LEN);
-  strncpy(cmd.verb, verb, PLUGIN_MAX_STRING_LEN);
+  snprintf(cmd.id, PLUGIN_MAX_STRING_LEN, "%s", "test-cmd");
+  snprintf(cmd.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
+  snprintf(cmd.verb, PLUGIN_MAX_STRING_LEN, "%s", verb);
 
   cmd.param_count = 0;
   cmd.expects_response = expects_response;
@@ -29,9 +30,11 @@ static PluginCommand make_cmd(const char *verb, bool expects_response) {
 static int setup(void **state) {
   PluginConfig config = {0};
 
-  strncpy(config.instrument_name, "test-instr", PLUGIN_MAX_STRING_LEN);
-  strcpy(config.connection_json, "{\"address\":\"GPIB0::1::INSTR\"}");
-  strcpy(config.api_definition_json, "{}");
+  snprintf(config.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
+  snprintf(config.connection_json, sizeof(config.connection_json), "%s",
+           "{\"address\":\"GPIB0::1::INSTR\"}");
+  snprintf(config.api_definition_json, sizeof(config.api_definition_json), "%s",
+           "{}");
 
   assert_int_equal(plugin_initialize(&config), 0);
 
