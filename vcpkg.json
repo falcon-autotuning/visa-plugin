@@ -5,6 +5,7 @@
   "homepage": "https://github.com/falcon-autotuning/visa-plugin",
   "dependencies": [
     "cmocka",
+    "cjson",
     {
       "name": "instrument-plugin-api",
       "version>=": "1.0.4"
