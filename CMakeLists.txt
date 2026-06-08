@@ -6,18 +6,28 @@ project(
   LANGUAGES C
 )
 
+# --------------------------------------------------------
+# Dependencies
+# --------------------------------------------------------
 find_package(instrument-plugin-api CONFIG REQUIRED)
 find_package(instrument-log CONFIG REQUIRED)
 find_package(instrument-data CONFIG REQUIRED)
 find_package(cJSON CONFIG REQUIRED)
 
+# --------------------------------------------------------
+# Always build VISA stub (used for tests + fallback)
+# --------------------------------------------------------
 add_library(visa_stub STATIC stub/visa_stub.c)
 
 target_include_directories(visa_stub PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/stub
 )
 
+# --------------------------------------------------------
+# Find real VISA (optional on non-Windows)
+# --------------------------------------------------------
 unset(VISA_LIBRARY CACHE)
+unset(VISA_INCLUDE_DIR CACHE)
 
 if(WIN32)
   if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -41,6 +51,7 @@ if(WIN32)
   set(VISA_INCLUDE_DIR
     "C:/Program Files/IVI Foundation/VISA/Win64/include"
   )
+
 else()
   find_library(VISA_LIBRARY NAMES visa nivisa)
   find_path(VISA_INCLUDE_DIR NAMES visa.h)
@@ -52,23 +63,42 @@ find_package_handle_standard_args(VISA
   REQUIRED_VARS VISA_LIBRARY VISA_INCLUDE_DIR
 )
 
-# Create imported target for real VISA
-add_library(VISA::VISA UNKNOWN IMPORTED)
+# --------------------------------------------------------
+# Decide REAL vs STUB
+# --------------------------------------------------------
+if(VISA_FOUND)
+  message(STATUS "Using real VISA")
 
-set_target_properties(VISA::VISA PROPERTIES
-  IMPORTED_LOCATION "${VISA_LIBRARY}"
-  INTERFACE_INCLUDE_DIRECTORIES "${VISA_INCLUDE_DIR}"
-)
+  add_library(VISA::VISA UNKNOWN IMPORTED)
+  set_target_properties(VISA::VISA PROPERTIES
+    IMPORTED_LOCATION "${VISA_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${VISA_INCLUDE_DIR}"
+  )
 
-message(STATUS "Found VISA include: ${VISA_INCLUDE_DIR}")
-message(STATUS "Found VISA library: ${VISA_LIBRARY}")
+  set(VISA_DEP VISA::VISA)
+  set(VISA_INCLUDE_USED ${VISA_INCLUDE_DIR})
 
+else()
+  message(WARNING "VISA not found — falling back to stub")
+
+  set(VISA_DEP visa_stub)
+  set(VISA_INCLUDE_USED ${CMAKE_CURRENT_SOURCE_DIR}/stub)
+endif()
+
+message(STATUS "VISA include: ${VISA_INCLUDE_USED}")
+if(VISA_FOUND)
+  message(STATUS "VISA library: ${VISA_LIBRARY}")
+endif()
+
+# --------------------------------------------------------
+# Core library (NO VISA dependency)
+# --------------------------------------------------------
 add_library(visa_plugin_core STATIC
   plugin.c
 )
 
 target_include_directories(visa_plugin_core PRIVATE
-  ${VISA_INCLUDE_DIR}
+  ${VISA_INCLUDE_USED}
 )
 
 target_link_libraries(visa_plugin_core
@@ -79,24 +109,34 @@ target_link_libraries(visa_plugin_core
     instrument-data::instrument-data
 )
 
+# --------------------------------------------------------
+# Plugin (uses real VISA if available)
+# --------------------------------------------------------
 add_instrument_plugin(visa_plugin
   SOURCES
     plugin.c
   LINK_LIBRARIES
-    VISA::VISA
+    ${VISA_DEP}
     cjson
     instrument-plugin-api::instrument-plugin-api
     instrument-log::instrument-log
     instrument-data::instrument-data
   INCLUDE_DIRS
-    ${VISA_INCLUDE_DIR}
+    ${VISA_INCLUDE_USED}
 )
 
+# --------------------------------------------------------
+# Tests (always stub)
+# --------------------------------------------------------
+enable_testing()
+
 if(BUILD_TESTS)
-  enable_testing()
   add_subdirectory(tests)
 endif()
 
+# --------------------------------------------------------
+# Install
+# --------------------------------------------------------
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
