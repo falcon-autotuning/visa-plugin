@@ -11,44 +11,40 @@ find_package(instrument-log CONFIG REQUIRED)
 find_package(instrument-data CONFIG REQUIRED)
 find_package(cJSON CONFIG REQUIRED)
 
-set(VISA_PATH_HINTS)
+add_library(visa_stub STATIC stub/visa_stub.c)
 
-# Environment variables (user-installed VISA)
-if(DEFINED ENV{VISA_ROOT})
-  list(APPEND VISA_PATH_HINTS $ENV{VISA_ROOT})
-endif()
+target_include_directories(visa_stub PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/stub
+)
 
-if(DEFINED ENV{NI_VISA_ROOT})
-  list(APPEND VISA_PATH_HINTS $ENV{NI_VISA_ROOT})
-endif()
+unset(VISA_LIBRARY CACHE)
 
-# Default install locations
 if(WIN32)
-  list(APPEND VISA_PATH_HINTS
-    "C:/Program Files/IVI Foundation/VISA/Win64"
-    "C:/Program Files/IVI Foundation/VISA/WinNT"
-    "C:/Program Files (x86)/IVI Foundation/VISA/WinNT"
+  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(VISA_NAMES visa64 nivisa64)
+    set(VISA_PATHS
+      "C:/Program Files/IVI Foundation/VISA/Win64/Lib_x64/msc"
+    )
+  else()
+    set(VISA_NAMES visa32)
+    set(VISA_PATHS
+      "C:/Program Files (x86)/IVI Foundation/VISA/WinNT/lib/msc"
+    )
+  endif()
+
+  find_library(VISA_LIBRARY
+    NAMES ${VISA_NAMES}
+    PATHS ${VISA_PATHS}
+    NO_DEFAULT_PATH
+  )
+
+  set(VISA_INCLUDE_DIR
+    "C:/Program Files/IVI Foundation/VISA/Win64/include"
   )
 else()
-  list(APPEND VISA_PATH_HINTS
-    /usr
-    /usr/local
-    /opt/ni-visa
-    /opt/visa
-  )
+  find_library(VISA_LIBRARY NAMES visa nivisa)
+  find_path(VISA_INCLUDE_DIR NAMES visa.h)
 endif()
-
-find_path(VISA_INCLUDE_DIR
-  NAMES visa.h
-  HINTS ${VISA_PATH_HINTS}
-  PATH_SUFFIXES include
-)
-
-find_library(VISA_LIBRARY
-  NAMES visa visa64 nivisa
-  HINTS ${VISA_PATH_HINTS}
-  PATH_SUFFIXES lib lib64 lib/x64 lib/msc
-)
 
 include(FindPackageHandleStandardArgs)
 
@@ -56,66 +52,44 @@ find_package_handle_standard_args(VISA
   REQUIRED_VARS VISA_LIBRARY VISA_INCLUDE_DIR
 )
 
-if(NOT VISA_FOUND)
+# Create imported target for real VISA
+add_library(VISA::VISA UNKNOWN IMPORTED)
 
-  if(WIN32)
-    message(FATAL_ERROR "NI-VISA not found on Windows. Please install NI-VISA.")
-  endif()
-
-  message(WARNING "NI-VISA not found. Using VISA stub implementation.")
-
-  add_library(visa_stub STATIC stub/visa_stub.c)
-
-  set(VISA_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/stub)
-
-  target_include_directories(visa_stub PUBLIC
-    ${VISA_INCLUDE_DIR}
-  )
-
-  add_library(VISA::VISA ALIAS visa_stub)
-
-
-else()
-
-  add_library(VISA::VISA UNKNOWN IMPORTED)
-
-  set_target_properties(VISA::VISA PROPERTIES
-    IMPORTED_LOCATION "${VISA_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${VISA_INCLUDE_DIR}"
-  )
-
-  message(STATUS "Found VISA include: ${VISA_INCLUDE_DIR}")
-  message(STATUS "Found VISA library: ${VISA_LIBRARY}")
-
-endif()
-
-set(VISA_LINK_LIBRARIES
-  VISA::VISA
-  cjson
-  instrument-plugin-api::instrument-plugin-api
-  instrument-log::instrument-log
-  instrument-data::instrument-data
+set_target_properties(VISA::VISA PROPERTIES
+  IMPORTED_LOCATION "${VISA_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${VISA_INCLUDE_DIR}"
 )
 
-add_instrument_plugin(visa_plugin
-  SOURCES
-    plugin.c
-  LINK_LIBRARIES
-    ${VISA_LINK_LIBRARIES}
-  INCLUDE_DIRS
-    ${VISA_INCLUDE_DIR}
-)
+message(STATUS "Found VISA include: ${VISA_INCLUDE_DIR}")
+message(STATUS "Found VISA library: ${VISA_LIBRARY}")
 
 add_library(visa_plugin_core STATIC
   plugin.c
 )
+
 target_include_directories(visa_plugin_core PRIVATE
   ${VISA_INCLUDE_DIR}
 )
 
 target_link_libraries(visa_plugin_core
   PRIVATE
-    ${VISA_LINK_LIBRARIES}
+    cjson
+    instrument-plugin-api::instrument-plugin-api
+    instrument-log::instrument-log
+    instrument-data::instrument-data
+)
+
+add_instrument_plugin(visa_plugin
+  SOURCES
+    plugin.c
+  LINK_LIBRARIES
+    VISA::VISA
+    cjson
+    instrument-plugin-api::instrument-plugin-api
+    instrument-log::instrument-log
+    instrument-data::instrument-data
+  INCLUDE_DIRS
+    ${VISA_INCLUDE_DIR}
 )
 
 if(BUILD_TESTS)
