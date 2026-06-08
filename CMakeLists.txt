@@ -45,7 +45,7 @@ find_path(VISA_INCLUDE_DIR
 )
 
 find_library(VISA_LIBRARY
-  NAMES visa visa64 nivisa visa32
+  NAMES visa visa64 nivisa
   HINTS ${VISA_PATH_HINTS}
   PATH_SUFFIXES lib lib64 lib/x64 lib/msc
 )
