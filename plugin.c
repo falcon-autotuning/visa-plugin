@@ -2,6 +2,7 @@
 #include <instrument-data.h>
 #include <instrument-log/inst_logging.h>
 #include <instrument-plugin.h>
+#include <plugin-api.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -25,6 +26,7 @@
 typedef struct {
   ViSession default_rm;
   ViSession instrument;
+  char instrument_name[PLUGIN_MAX_STRING_LEN];
   char resource_address[PLUGIN_MAX_STRING_LEN];
   uint32_t timeout_ms;
   char termination_char[4];
@@ -57,31 +59,34 @@ PluginMetadata plugin_get_metadata(void) {
   return meta;
 }
 
-int32_t plugin_initialize(const PluginConfig *config) {
+uint8_t plugin_initialize(const PluginConfig *config) {
   VISA_LOG_INFO("init %s\n", config->instrument_name);
 
-  cJSON *conn = cJSON_Parse(config->connection_json);
-  if (!conn) {
-    VISA_LOG_ERROR("Could not parse the ISA on instrument init\n");
-    return -1;
-  }
+  snprintf(g_state.instrument_name, sizeof(g_state.instrument_name), "%s",
+           config->instrument_name);
 
-  const char *addr = get_json_string(conn, "address", "");
-  if (!addr[0]) {
-    cJSON_Delete(conn);
-    VISA_LOG_ERROR("Could not parse the address field in the ISA\n");
-    return -1;
+  if (!config->address[0]) {
+    VISA_LOG_ERROR("Could not parse the address field in the configuration\n");
+    return 1;
   }
 
   snprintf(g_state.resource_address, sizeof(g_state.resource_address), "%s",
-           addr);
-  g_state.timeout_ms = get_json_int(conn, "timeout", 5000);
-  VISA_LOG_DEBUG(
-      "The selected timeout for the instrument in milliseonds is %d\n",
-      g_state.timeout_ms);
+           config->address);
 
-  const char *term = get_json_string(conn, "termination", "\\n");
+  g_state.timeout_ms = 5000;
+  const char *term = "\\n";
+
+  cJSON *custom_json = cJSON_Parse(config->custom);
+  if (custom_json) {
+    g_state.timeout_ms = get_json_int(custom_json, "timeout", 5000);
+    term = get_json_string(custom_json, "termination", "\\n");
+  }
+
+  VISA_LOG_DEBUG(
+      "The selected timeout for the instrument in milliseconds is %d\n",
+      g_state.timeout_ms);
   VISA_LOG_DEBUG("The selected termination for the instrument is %s\n", term);
+
   if (strcmp(term, "\\n") == 0)
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              "\n");
@@ -95,18 +100,20 @@ int32_t plugin_initialize(const PluginConfig *config) {
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              term);
 
-  cJSON_Delete(conn);
+  if (custom_json) {
+    cJSON_Delete(custom_json);
+  }
 
   if (viOpenDefaultRM(&g_state.default_rm) < VI_SUCCESS) {
     VISA_LOG_ERROR("Unable to start default rm for VISA\n");
-    return -1;
+    return 1;
   }
 
   if (viOpen(g_state.default_rm, g_state.resource_address, VI_NO_LOCK,
              g_state.timeout_ms, &g_state.instrument) < VI_SUCCESS) {
     VISA_LOG_ERROR(
         "Unable to lock instrument and check the instrument state\n");
-    return -1;
+    return 1;
   }
 
   g_state.initialized = true;
@@ -158,153 +165,192 @@ static int visa_read_buffer(char **out_buf, size_t *out_len) {
   return 0;
 }
 
+static void parse_single_token(const char *token, Variable *var) {
+  // Trim leading/trailing whitespace
+  while (*token == ' ' || *token == '\t' || *token == '\r' || *token == '\n') {
+    token++;
+  }
+  size_t len = strlen(token);
+  while (len > 0 && (token[len - 1] == ' ' || token[len - 1] == '\t' || token[len - 1] == '\r' || token[len - 1] == '\n')) {
+    len--;
+  }
+
+  // Strip quotes if any
+  const char *start = token;
+  if (len >= 2 && ((start[0] == '"' && start[len - 1] == '"') || (start[0] == '\'' && start[len - 1] == '\''))) {
+    start++;
+    len -= 2;
+  }
+
+  // Temporary buffer for null-terminated token
+  char *temp = malloc(len + 1);
+  memcpy(temp, start, len);
+  temp[len] = '\0';
+
+  snprintf(var->name, sizeof(var->name), "value");
+
+  if (strcmp(temp, "1") == 0 || strcasecmp(temp, "ON") == 0) {
+    var->type = PARAM_TYPE_BOOL;
+    var->value.b_val = true;
+    free(temp);
+    return;
+  }
+
+  if (strcmp(temp, "0") == 0 || strcasecmp(temp, "OFF") == 0) {
+    var->type = PARAM_TYPE_BOOL;
+    var->value.b_val = false;
+    free(temp);
+    return;
+  }
+
+  char *end;
+  long long i = strtoll(temp, &end, 10);
+  if (end != temp && *end == '\0') {
+    var->type = PARAM_TYPE_INT64;
+    var->value.i64_val = i;
+    free(temp);
+    return;
+  }
+
+  char *end2;
+  double d = strtod(temp, &end2);
+  if (end2 != temp && *end2 == '\0') {
+    var->type = PARAM_TYPE_DOUBLE;
+    var->value.d_val = d;
+    free(temp);
+    return;
+  }
+
+  var->type = PARAM_TYPE_STRING;
+  snprintf(var->value.str_val, sizeof(var->value.str_val), "%s", temp);
+  free(temp);
+}
+
 static int parse_and_fill_response(const PluginCommand *cmd,
                                    PluginResponse *resp, char *buffer,
                                    size_t read_len) {
-  bool has_delim = strchr(buffer, ',') || strchr(buffer, ' ');
-  bool has_digit = strpbrk(buffer, "0123456789");
+  size_t comma_count = 0;
+  for (size_t i = 0; i < read_len; i++) {
+    if (buffer[i] == ',') {
+      comma_count++;
+    }
+  }
 
-  if (has_delim && has_digit) {
-    VISA_LOG_DEBUG("Detected array");
+  if (comma_count == 0) {
+    Variable var = {0};
+    parse_single_token(buffer, &var);
+    plugin_response_push(resp, &var);
+    return 0;
+  }
 
-    size_t est = 1;
-    for (size_t i = 0; i < read_len; i++)
-      if (buffer[i] == ',' || buffer[i] == ' ')
-        est++;
+  size_t token_count = comma_count + 1;
+  char **tokens = malloc(token_count * sizeof(char*));
+  char *buf_copy = strdup(buffer);
+  size_t idx = 0;
+  char *tok = strtok(buf_copy, ",");
+  while (tok != NULL && idx < token_count) {
+    tokens[idx++] = strdup(tok);
+    tok = strtok(NULL, ",");
+  }
+  token_count = idx;
+  free(buf_copy);
 
+  bool all_numeric = true;
+  Variable *vars = malloc(token_count * sizeof(Variable));
+  for (size_t i = 0; i < token_count; i++) {
+    memset(&vars[i], 0, sizeof(Variable));
+    parse_single_token(tokens[i], &vars[i]);
+    if (vars[i].type != PARAM_TYPE_INT64 && vars[i].type != PARAM_TYPE_DOUBLE) {
+      all_numeric = false;
+    }
+  }
+
+  if (all_numeric) {
     void *shm_ptr = NULL;
-
     const char *buf_id = data_manager_create_buffer_zero_copy(
-        cmd->instrument_name, cmd->id, INST_DATA_FLOAT32, est, &shm_ptr);
+        g_state.instrument_name, cmd->id, INST_DATA_FLOAT32, token_count, &shm_ptr);
 
     if (!buf_id || !shm_ptr) {
-      VISA_LOG_ERROR("Buffer allocation failed (%zu)", est);
-      snprintf(resp->error_message, sizeof(resp->error_message), "%s",
-               "buffer alloc failed");
-      resp->success = false;
+      VISA_LOG_ERROR("Buffer allocation failed (%zu)", token_count);
+      for (size_t i = 0; i < token_count; i++) {
+        free(tokens[i]);
+      }
+      free(tokens);
+      free(vars);
       return -1;
     }
 
     float *out = (float *)shm_ptr;
-    size_t count = parse_float_array(buffer, out, est);
+    for (size_t i = 0; i < token_count; i++) {
+      if (vars[i].type == PARAM_TYPE_INT64) {
+        out[i] = (float)vars[i].value.i64_val;
+      } else {
+        out[i] = (float)vars[i].value.d_val;
+      }
+    }
 
-    resp->has_large_data = true;
-    snprintf(resp->data_buffer_id, sizeof(resp->data_buffer_id), "%s", buf_id);
-    resp->data_element_count = count;
-    resp->data_type = INST_DATA_FLOAT32;
+    Variable var = {0};
+    snprintf(var.name, sizeof(var.name), "value");
+    var.type = PARAM_TYPE_BUFFER;
+    snprintf(var.value.str_val, sizeof(var.value.str_val), "%s", buf_id);
 
-    snprintf(resp->text_response, PLUGIN_MAX_PAYLOAD, "buffer:%s count=%zu",
-             buf_id, count);
-
-    VISA_LOG_DEBUG("Parsed %zu elements -> %s", count, buf_id);
-
-    resp->success = true;
-    return 0;
+    VISA_LOG_DEBUG("Parsed %zu elements -> %s", token_count, buf_id);
+    plugin_response_push(resp, &var);
+  } else {
+    for (size_t i = 0; i < token_count; i++) {
+      plugin_response_push(resp, &vars[i]);
+    }
   }
 
-  if (strcmp(buffer, "1") == 0 || strcasecmp(buffer, "ON") == 0) {
-    resp->return_value.type = PARAM_TYPE_BOOL;
-    resp->return_value.value.b_val = true;
-    goto done;
+  for (size_t i = 0; i < token_count; i++) {
+    free(tokens[i]);
   }
-
-  if (strcmp(buffer, "0") == 0 || strcasecmp(buffer, "OFF") == 0) {
-    resp->return_value.type = PARAM_TYPE_BOOL;
-    resp->return_value.value.b_val = false;
-    goto done;
-  }
-
-  char *end;
-  long long i = strtoll(buffer, &end, 10);
-
-  if (end != buffer && *end == '\0') {
-    resp->return_value.type = PARAM_TYPE_INT64;
-    resp->return_value.value.i64_val = i;
-    goto done;
-  }
-
-  char *end2;
-  double d = strtod(buffer, &end2);
-
-  if (end2 != buffer && *end2 == '\0') {
-    resp->return_value.type = PARAM_TYPE_DOUBLE;
-    resp->return_value.value.d_val = d;
-    goto done;
-  }
-
-  resp->return_value.type = PARAM_TYPE_STRING;
-  snprintf(resp->return_value.value.str_val,
-           sizeof(resp->return_value.value.str_val), "%s", buffer);
-
-done:
-
-  snprintf(resp->text_response, sizeof(resp->text_response), "%s", buffer);
-  resp->success = true;
-
-  VISA_LOG_DEBUG("Scalar parsed: '%s'", buffer);
-
+  free(tokens);
+  free(vars);
   return 0;
 }
 
-int32_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
-
-  memset(resp, 0, sizeof(PluginResponse));
-  snprintf(resp->command_id, sizeof(resp->command_id), "%s", cmd->id);
-
-  snprintf(resp->instrument_name, sizeof(resp->instrument_name), "%s",
-           cmd->instrument_name);
-
-  resp->return_value.type = PARAM_TYPE_NONE;
-
+uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   if (!g_state.initialized) {
-    resp->success = false;
     VISA_LOG_ERROR("Not initialized VISA plugin");
-    snprintf(resp->error_message, sizeof(resp->error_message), "%s",
-             "Not initialized");
-    return -1;
+    return 1;
   }
 
   viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, cmd->timeout_ms);
 
-  char cmd_buf[PLUGIN_MAX_PAYLOAD];
-  snprintf(cmd_buf, sizeof(cmd_buf), "%s%s", cmd->verb,
+  char cmd_buf[1024];
+  snprintf(cmd_buf, sizeof(cmd_buf), "%s%s", cmd->command,
            g_state.termination_char);
 
   ViUInt32 written = 0;
   ViStatus write_status =
       viWrite(g_state.instrument, (ViBuf)cmd_buf, strlen(cmd_buf), &written);
   if (write_status < VI_SUCCESS) {
-    resp->success = false;
     VISA_LOG_ERROR("Write failed: 0x%08X", write_status);
-    snprintf(resp->error_message, sizeof(resp->error_message), "%s",
-             "VISA write failed");
-    return -1;
+    return 1;
   }
-  if (!cmd->expects_response) {
-    resp->success = true;
+
+  bool expects_response = (strchr(cmd->command, '?') != NULL);
+  if (!expects_response) {
     VISA_LOG_DEBUG("Write successful (no response expected)");
     return 0;
   }
 
   char *buffer = NULL;
   size_t read_len = 0;
-  int rc = -1;
+  uint8_t rc = 1;
 
   if (visa_read_buffer(&buffer, &read_len) == 0) {
-    rc = parse_and_fill_response(cmd, resp, buffer, read_len);
+    if (parse_and_fill_response(cmd, resp, buffer, read_len) == 0) {
+      rc = 0;
+    }
   } else {
-    resp->success = false;
-    snprintf(resp->error_message, sizeof(resp->error_message), "%s",
-             "VISA read failed");
+    VISA_LOG_ERROR("VISA read failed");
   }
 
   free(buffer);
   return rc;
 }
-
-// =========================
-// Shutdown
-// =========================
 
 void plugin_shutdown(void) {
   if (g_state.instrument)

@@ -1,15 +1,16 @@
 {
   "name": "instrument-data",
-  "version-string": "1.1.7",
+  "version": "1.1.8",
   "description": "An cross OS shared memory platform for collecting scientific data from instruments",
-  "builtin-baseline": "e5a1490e1409d175932ef6014519e9ae149ddb7c",
   "dependencies": [
-    "vcpkg-cmake",
-    "vcpkg-cmake-config",
-    "uthash",
     {
-      "name": "instrument-plugin-api",
-      "version>=": "1.0.4"
-    }
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    },
+    "uthash"
   ]
 }

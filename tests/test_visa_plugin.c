@@ -3,21 +3,23 @@
 #include <string.h>
 #include <cmocka.h>
 #include <instrument-plugin.h>
+#include <plugin-api.h>
+#include <plugin-host.h>
 #include <stdarg.h>
+
 void visa_stub_set_response(const char *resp);
+
 // ============================================================
 // Helper
 // ============================================================
 
-static PluginCommand make_cmd(const char *verb, bool expects_response) {
+static PluginCommand make_cmd(const char *command) {
   PluginCommand cmd = {0};
 
   snprintf(cmd.id, PLUGIN_MAX_STRING_LEN, "%s", "test-cmd");
-  snprintf(cmd.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
-  snprintf(cmd.verb, PLUGIN_MAX_STRING_LEN, "%s", verb);
+  snprintf(cmd.command, PLUGIN_MAX_STRING_LEN, "%s", command);
 
-  cmd.param_count = 0;
-  cmd.expects_response = expects_response;
+  cmd.params = param_storage_create();
   cmd.timeout_ms = 1000;
 
   return cmd;
@@ -31,10 +33,8 @@ static int setup(void **state) {
   PluginConfig config = {0};
 
   snprintf(config.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
-  snprintf(config.connection_json, sizeof(config.connection_json), "%s",
-           "{\"address\":\"GPIB0::1::INSTR\"}");
-  snprintf(config.api_definition_json, sizeof(config.api_definition_json), "%s",
-           "{}");
+  snprintf(config.address, PLUGIN_MAX_STRING_LEN, "%s", "GPIB0::1::INSTR");
+  snprintf(config.custom, PLUGIN_MAX_STRING_LEN, "%s", "{}");
 
   assert_int_equal(plugin_initialize(&config), 0);
 
@@ -65,81 +65,140 @@ static void test_metadata(void **state) {
 }
 
 static void test_no_response(void **state) {
-  PluginCommand cmd = make_cmd("*CLS", false);
-  PluginResponse resp;
+  PluginCommand cmd = make_cmd("*CLS");
+  PluginResponse *resp = plugin_response_create();
 
-  int rc = plugin_execute_command(&cmd, &resp);
+  int rc = plugin_execute_command(&cmd, resp);
 
   assert_int_equal(rc, 0);
-  assert_true(resp.success);
-  assert_false(resp.has_large_data);
+  assert_int_equal(plugin_response_count(resp), 0);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
 }
 
 static void test_integer_response(void **state) {
   visa_stub_set_response("42\n");
 
-  PluginCommand cmd = make_cmd("MEAS?", true);
-  PluginResponse resp;
+  PluginCommand cmd = make_cmd("MEAS?");
+  PluginResponse *resp = plugin_response_create();
 
-  plugin_execute_command(&cmd, &resp);
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
 
-  assert_true(resp.success);
-  assert_int_equal(resp.return_value.type, PARAM_TYPE_INT64);
-  assert_int_equal(resp.return_value.value.i64_val, 42);
+  assert_int_equal(plugin_response_count(resp), 1);
+  const Variable *v = plugin_response_get(resp, 0);
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_INT64);
+  assert_int_equal(v->value.i64_val, 42);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
 }
 
 static void test_double_response(void **state) {
   visa_stub_set_response("3.14\n");
 
-  PluginCommand cmd = make_cmd("MEAS?", true);
-  PluginResponse resp;
+  PluginCommand cmd = make_cmd("MEAS?");
+  PluginResponse *resp = plugin_response_create();
 
-  plugin_execute_command(&cmd, &resp);
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
 
-  assert_true(resp.success);
-  assert_int_equal(resp.return_value.type, PARAM_TYPE_DOUBLE);
-  assert_float_equal(resp.return_value.value.d_val, 3.14, 0.0001);
+  assert_int_equal(plugin_response_count(resp), 1);
+  const Variable *v = plugin_response_get(resp, 0);
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_DOUBLE);
+  assert_float_equal(v->value.d_val, 3.14, 0.0001);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
 }
 
 static void test_bool_response(void **state) {
   visa_stub_set_response("1\n");
 
-  PluginCommand cmd = make_cmd("STAT?", true);
-  PluginResponse resp;
+  PluginCommand cmd = make_cmd("STAT?");
+  PluginResponse *resp = plugin_response_create();
 
-  plugin_execute_command(&cmd, &resp);
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
 
-  assert_true(resp.success);
-  assert_int_equal(resp.return_value.type, PARAM_TYPE_BOOL);
-  assert_true(resp.return_value.value.b_val);
+  assert_int_equal(plugin_response_count(resp), 1);
+  const Variable *v = plugin_response_get(resp, 0);
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_BOOL);
+  assert_true(v->value.b_val);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
 }
 
 static void test_string_response(void **state) {
   visa_stub_set_response("HELLO\n");
 
-  PluginCommand cmd = make_cmd("ID?", true);
-  PluginResponse resp;
+  PluginCommand cmd = make_cmd("ID?");
+  PluginResponse *resp = plugin_response_create();
 
-  plugin_execute_command(&cmd, &resp);
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
 
-  assert_true(resp.success);
-  assert_int_equal(resp.return_value.type, PARAM_TYPE_STRING);
-  assert_string_equal(resp.return_value.value.str_val, "HELLO");
+  assert_int_equal(plugin_response_count(resp), 1);
+  const Variable *v = plugin_response_get(resp, 0);
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_STRING);
+  assert_string_equal(v->value.str_val, "HELLO");
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
 }
 
 static void test_array_response(void **state) {
   visa_stub_set_response("1.0,2.0,3.0\n");
 
-  PluginCommand cmd = make_cmd("TRACE?", true);
-  PluginResponse resp;
+  PluginCommand cmd = make_cmd("TRACE?");
+  PluginResponse *resp = plugin_response_create();
 
-  plugin_execute_command(&cmd, &resp);
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
 
-  assert_true(resp.success);
+  assert_int_equal(plugin_response_count(resp), 1);
+  const Variable *v = plugin_response_get(resp, 0);
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_BUFFER);
+  assert_true(strlen(v->value.str_val) > 0);
 
-  assert_true(resp.has_large_data);
-  assert_int_equal(resp.data_type, INST_DATA_FLOAT32);
-  assert_int_equal(resp.data_element_count, 3);
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
+static void test_mixed_response(void **state) {
+  visa_stub_set_response("404,\"No error\",4.2,ON\n");
+
+  PluginCommand cmd = make_cmd("SYSTEM:ERROR?");
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 4);
+
+  const Variable *v0 = plugin_response_get(resp, 0);
+  assert_non_null(v0);
+  assert_int_equal(v0->type, PARAM_TYPE_INT64);
+  assert_int_equal(v0->value.i64_val, 404);
+
+  const Variable *v1 = plugin_response_get(resp, 1);
+  assert_non_null(v1);
+  assert_int_equal(v1->type, PARAM_TYPE_STRING);
+  assert_string_equal(v1->value.str_val, "No error");
+
+  const Variable *v2 = plugin_response_get(resp, 2);
+  assert_non_null(v2);
+  assert_int_equal(v2->type, PARAM_TYPE_DOUBLE);
+  assert_float_equal(v2->value.d_val, 4.2, 0.0001);
+
+  const Variable *v3 = plugin_response_get(resp, 3);
+  assert_non_null(v3);
+  assert_int_equal(v3->type, PARAM_TYPE_BOOL);
+  assert_true(v3->value.b_val);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
 }
 
 // ============================================================
@@ -155,6 +214,7 @@ int main(void) {
       cmocka_unit_test_setup_teardown(test_bool_response, setup, teardown),
       cmocka_unit_test_setup_teardown(test_string_response, setup, teardown),
       cmocka_unit_test_setup_teardown(test_array_response, setup, teardown),
+      cmocka_unit_test_setup_teardown(test_mixed_response, setup, teardown),
   };
 
   return cmocka_run_group_tests(tests, NULL, NULL);

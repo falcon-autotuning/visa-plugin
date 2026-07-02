@@ -10,6 +10,21 @@ project(
 # Dependencies
 # --------------------------------------------------------
 find_package(instrument-plugin-api CONFIG REQUIRED)
+
+if(TARGET instrument-plugin-api::instrument-plugin-api-plugin AND NOT TARGET instrument-plugin-api::plugin)
+  add_library(instrument-plugin-api::plugin INTERFACE IMPORTED)
+  set_target_properties(instrument-plugin-api::plugin PROPERTIES
+    INTERFACE_LINK_LIBRARIES instrument-plugin-api::instrument-plugin-api-plugin
+  )
+endif()
+
+if(TARGET instrument-plugin-api::instrument-plugin-api-host AND NOT TARGET instrument-plugin-api::host)
+  add_library(instrument-plugin-api::host INTERFACE IMPORTED)
+  set_target_properties(instrument-plugin-api::host PROPERTIES
+    INTERFACE_LINK_LIBRARIES instrument-plugin-api::instrument-plugin-api-host
+  )
+endif()
+
 find_package(instrument-log CONFIG REQUIRED)
 find_package(instrument-data CONFIG REQUIRED)
 find_package(cJSON CONFIG REQUIRED)
@@ -104,7 +119,7 @@ target_include_directories(visa_plugin_core PRIVATE
 target_link_libraries(visa_plugin_core
   PRIVATE
     cjson
-    instrument-plugin-api::instrument-plugin-api
+    instrument-plugin-api::plugin
     instrument-log::instrument-log
     instrument-data::instrument-data
 )
@@ -118,7 +133,7 @@ add_instrument_plugin(visa_plugin
   LINK_LIBRARIES
     ${VISA_DEP}
     cjson
-    instrument-plugin-api::instrument-plugin-api
+    instrument-plugin-api::plugin
     instrument-log::instrument-log
     instrument-data::instrument-data
   INCLUDE_DIRS
