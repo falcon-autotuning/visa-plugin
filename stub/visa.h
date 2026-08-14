@@ -14,6 +14,8 @@ typedef unsigned char *ViBuf;
 #define VI_NO_LOCK 0
 #define VI_ATTR_TMO_VALUE 0x3FFF001A
 
+#define VI_ERROR_TMO 10
+
 ViStatus viOpenDefaultRM(ViSession *rm);
 ViStatus viOpen(ViSession rm, const char *addr, uint32_t mode, uint32_t timeout,
                 ViSession *instr);

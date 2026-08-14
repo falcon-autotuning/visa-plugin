@@ -15,6 +15,8 @@
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
+#else
+#include <time.h>
 #endif
 #define MAX_READ_SIZE (1024 * 1024)
 #define VISA_LOG_INFO(fmt, ...) LOG_INFO("Plugin", "VISA", fmt, ##__VA_ARGS__)
@@ -44,6 +46,15 @@ static const char *get_json_string(cJSON *json, const char *key,
 static int get_json_int(cJSON *json, const char *key, int def) {
   cJSON *item = cJSON_GetObjectItem(json, key);
   return (item && cJSON_IsNumber(item)) ? item->valueint : def;
+}
+static uint64_t get_time_ms(void) {
+#ifdef _WIN32
+  return GetTickCount64();
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
+#endif
 }
 
 PluginMetadata plugin_get_metadata(void) {
@@ -133,36 +144,82 @@ static size_t parse_float_array(char *buf, float *out, size_t max) {
   return count;
 }
 
-static int visa_read_buffer(char **out_buf, size_t *out_len) {
-  char *buffer = (char *)malloc(MAX_READ_SIZE);
+static int visa_read_buffer(char **out_buf, size_t *out_len,
+                            uint32_t timeout_ms) {
+  char *buffer = malloc(MAX_READ_SIZE);
   if (!buffer) {
-    VISA_LOG_ERROR("Failed to allocate read buffer (%d bytes)", MAX_READ_SIZE);
+    VISA_LOG_ERROR("Failed to allocate read buffer");
     return -1;
   }
 
-  ViUInt32 read = 0;
+  uint64_t start_time = get_time_ms();
 
-  ViStatus st =
-      viRead(g_state.instrument, (ViBuf)buffer, MAX_READ_SIZE - 1, &read);
+  size_t total_read = 0;
+  size_t term_len = strlen(g_state.termination_char);
 
-  VISA_LOG_DEBUG("viRead -> status=0x%08X bytes=%u", st, read);
+  while (total_read < (MAX_READ_SIZE - 1)) {
+    uint64_t elapsed = get_time_ms() - start_time;
 
-  if (st < VI_SUCCESS && st != VI_SUCCESS_MAX_CNT) {
-    VISA_LOG_ERROR("VISA read failed: 0x%08X", st);
-    free(buffer);
-    return -1;
+    if (elapsed >= timeout_ms) {
+      VISA_LOG_ERROR("Overall VISA timeout reached (%u ms)", timeout_ms);
+      free(buffer);
+      return -1;
+    }
+
+    uint32_t remaining = timeout_ms - (uint32_t)elapsed;
+
+    /*
+     * Poll in small increments but always allow
+     * the final read to consume the exact time
+     * remaining.
+     */
+    uint32_t read_timeout = (remaining > 100) ? 100 : remaining;
+
+    viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, read_timeout);
+
+    ViUInt32 chunk_read = 0;
+
+    ViStatus st =
+        viRead(g_state.instrument, (ViBuf)(buffer + total_read),
+               (ViUInt32)(MAX_READ_SIZE - total_read - 1), &chunk_read);
+
+    VISA_LOG_TRACE("viRead -> status=0x%08X bytes=%u remaining=%u", st,
+                   chunk_read, remaining);
+
+    if (chunk_read > 0) {
+      total_read += chunk_read;
+      buffer[total_read] = '\0';
+
+      if (term_len > 0 && total_read >= term_len &&
+          memcmp(buffer + total_read - term_len, g_state.termination_char,
+                 term_len) == 0) {
+        total_read -= term_len;
+        buffer[total_read] = '\0';
+
+        *out_buf = buffer;
+        *out_len = total_read;
+        return 0;
+      }
+    }
+
+    /*
+     * Poll timeout.
+     * Just continue until the overall timeout expires.
+     */
+    if (st == VI_ERROR_TMO) {
+      continue;
+    }
+
+    if (st < VI_SUCCESS && st != VI_SUCCESS_MAX_CNT) {
+      VISA_LOG_ERROR("VISA read failed: 0x%08X", st);
+      free(buffer);
+      return -1;
+    }
   }
 
-  buffer[read] = '\0';
+  VISA_LOG_ERROR("Read buffer exceeded maximum size");
 
-  while (read > 0 && (buffer[read - 1] == '\n' || buffer[read - 1] == '\r')) {
-    buffer[--read] = '\0';
-  }
-
-  *out_buf = buffer;
-  *out_len = read;
-
-  return 0;
+  free(buffer);
 }
 
 static void parse_single_token(const char *token, Variable *var) {
@@ -171,13 +228,15 @@ static void parse_single_token(const char *token, Variable *var) {
     token++;
   }
   size_t len = strlen(token);
-  while (len > 0 && (token[len - 1] == ' ' || token[len - 1] == '\t' || token[len - 1] == '\r' || token[len - 1] == '\n')) {
+  while (len > 0 && (token[len - 1] == ' ' || token[len - 1] == '\t' ||
+                     token[len - 1] == '\r' || token[len - 1] == '\n')) {
     len--;
   }
 
   // Strip quotes if any
   const char *start = token;
-  if (len >= 2 && ((start[0] == '"' && start[len - 1] == '"') || (start[0] == '\'' && start[len - 1] == '\''))) {
+  if (len >= 2 && ((start[0] == '"' && start[len - 1] == '"') ||
+                   (start[0] == '\'' && start[len - 1] == '\''))) {
     start++;
     len -= 2;
   }
@@ -244,7 +303,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
   }
 
   size_t token_count = comma_count + 1;
-  char **tokens = malloc(token_count * sizeof(char*));
+  char **tokens = malloc(token_count * sizeof(char *));
   char *buf_copy = strdup(buffer);
   size_t idx = 0;
   char *tok = strtok(buf_copy, ",");
@@ -268,7 +327,8 @@ static int parse_and_fill_response(const PluginCommand *cmd,
   if (all_numeric) {
     void *shm_ptr = NULL;
     const char *buf_id = data_manager_create_buffer_zero_copy(
-        g_state.instrument_name, cmd->id, INST_DATA_FLOAT32, token_count, &shm_ptr);
+        g_state.instrument_name, cmd->id, INST_DATA_FLOAT32, token_count,
+        &shm_ptr);
 
     if (!buf_id || !shm_ptr) {
       VISA_LOG_ERROR("Buffer allocation failed (%zu)", token_count);
@@ -310,13 +370,14 @@ static int parse_and_fill_response(const PluginCommand *cmd,
   return 0;
 }
 
+#define VISA_READ_POLL_MS 100
 uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   if (!g_state.initialized) {
     VISA_LOG_ERROR("Not initialized VISA plugin");
     return 1;
   }
 
-  viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, cmd->timeout_ms);
+  viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, VISA_READ_POLL_MS);
 
   char cmd_buf[1024];
   snprintf(cmd_buf, sizeof(cmd_buf), "%s%s", cmd->command,
@@ -340,7 +401,7 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   size_t read_len = 0;
   uint8_t rc = 1;
 
-  if (visa_read_buffer(&buffer, &read_len) == 0) {
+  if (visa_read_buffer(&buffer, &read_len, cmd->timeout_ms) == 0) {
     if (parse_and_fill_response(cmd, resp, buffer, read_len) == 0) {
       rc = 0;
     }
