@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef int32_t ViStatus;
@@ -17,6 +18,7 @@ typedef unsigned char *ViBuf;
 #define VI_ERROR_TMO 10
 
 ViStatus viOpenDefaultRM(ViSession *rm);
+
 ViStatus viOpen(ViSession rm, const char *addr, uint32_t mode, uint32_t timeout,
                 ViSession *instr);
 
@@ -27,3 +29,9 @@ ViStatus viWrite(ViSession instr, ViBuf buf, ViUInt32 count, ViUInt32 *written);
 ViStatus viRead(ViSession instr, ViBuf buf, ViUInt32 count, ViUInt32 *read);
 
 ViStatus viClose(ViSession sess);
+
+/* Test helpers */
+void visa_stub_set_response(const char *resp);
+void visa_stub_set_response_delay(uint32_t delay_ms);
+void visa_stub_set_chunk_size(size_t chunk_size);
+void visa_stub_reset(void);

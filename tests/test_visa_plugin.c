@@ -7,7 +7,10 @@
 #include <plugin-host.h>
 #include <stdarg.h>
 
+void visa_stub_set_response_delay(uint32_t delay_ms);
 void visa_stub_set_response(const char *resp);
+void visa_stub_set_chunk_size(size_t chunk_size);
+void visa_stub_reset(void);
 
 // ============================================================
 // Helper
@@ -30,6 +33,7 @@ static PluginCommand make_cmd(const char *command) {
 // ============================================================
 
 static int setup(void **state) {
+  visa_stub_reset();
   PluginConfig config = {0};
 
   snprintf(config.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
@@ -201,6 +205,89 @@ static void test_mixed_response(void **state) {
   plugin_response_free(resp);
 }
 
+static void test_delayed_response_before_timeout(void **state) {
+  (void)state;
+
+  visa_stub_reset();
+
+  visa_stub_set_response("42\n");
+  visa_stub_set_response_delay(250);
+
+  PluginCommand cmd = make_cmd("MEAS?");
+  cmd.timeout_ms = 1000;
+
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 1);
+
+  const Variable *v = plugin_response_get(resp, 0);
+
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_INT64);
+
+  assert_int_equal(v->value.i64_val, 42);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
+static void test_response_timeout(void **state) {
+  (void)state;
+
+  visa_stub_reset();
+
+  visa_stub_set_response("42\n");
+  visa_stub_set_response_delay(1500);
+
+  PluginCommand cmd = make_cmd("MEAS?");
+  cmd.timeout_ms = 1000;
+
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 1);
+
+  assert_int_equal(plugin_response_count(resp), 0);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
+static void test_fragmented_termination(void **state) {
+  (void)state;
+
+  visa_stub_reset();
+
+  visa_stub_set_response("12345\n");
+
+  /*
+   * Reads:
+   * "123"
+   * "45\n"
+   */
+  visa_stub_set_chunk_size(3);
+
+  PluginCommand cmd = make_cmd("MEAS?");
+
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 1);
+
+  const Variable *v = plugin_response_get(resp, 0);
+
+  assert_non_null(v);
+
+  assert_int_equal(v->type, PARAM_TYPE_INT64);
+
+  assert_int_equal(v->value.i64_val, 12345);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
 // ============================================================
 // Main
 // ============================================================
@@ -215,6 +302,9 @@ int main(void) {
       cmocka_unit_test_setup_teardown(test_string_response, setup, teardown),
       cmocka_unit_test_setup_teardown(test_array_response, setup, teardown),
       cmocka_unit_test_setup_teardown(test_mixed_response, setup, teardown),
+      cmocka_unit_test_setup_teardown(test_delayed_response_before_timeout, setup, teardown),
+      cmocka_unit_test_setup_teardown(test_response_timeout, setup,teardown),
+      cmocka_unit_test_setup_teardown(test_fragmented_termination, setup,teardown),
   };
 
   return cmocka_run_group_tests(tests, NULL, NULL);
