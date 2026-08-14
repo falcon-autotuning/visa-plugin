@@ -102,16 +102,17 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     VISA_LOG_INFO("The selected termination for the instrument is newline\n");
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              "\n");
-   } else if (strcmp(term, "\\r") == 0) {
+  } else if (strcmp(term, "\\r") == 0) {
     VISA_LOG_INFO("The selected termination for the instrument is r\n");
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              "\r");
-   } else if (strcmp(term, "\\r\\n") == 0) {
+  } else if (strcmp(term, "\\r\\n") == 0) {
     VISA_LOG_INFO("The selected termination for the instrument is r newline\n");
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              "\r\n");
   } else {
-    VISA_LOG_INFO("The selected termination for the instrument is something else\n");
+    VISA_LOG_INFO(
+        "The selected termination for the instrument is something else\n");
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              term);
   }
@@ -292,16 +293,16 @@ static void parse_single_token(const char *token, Variable *var) {
 static int parse_and_fill_response(const PluginCommand *cmd,
                                    PluginResponse *resp, char *buffer,
                                    size_t read_len) {
-  
+
   bool is_terminal = true;
-  for (size_t i = 0; i < read_len; i++) { 
+  for (size_t i = 0; i < read_len; i++) {
     if (buffer[i] != g_state.termination_char[i]) {
       is_terminal = false;
       break;
     }
   }
   if (is_terminal) {
-    VISA_LOG_INFO("No response needed")
+    VISA_LOG_INFO("No response needed");
     return 0;
   }
 
@@ -317,7 +318,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
     parse_single_token(buffer, &var);
     plugin_response_push(resp, &var);
 
-    VISA_LOG_INFO("One response needed, pushing back happily")
+    VISA_LOG_INFO("One response needed, pushing back happily");
     return 0;
   }
 
