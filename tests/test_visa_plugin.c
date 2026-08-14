@@ -3,6 +3,7 @@
 #include <string.h>
 #include <cmocka.h>
 #include <instrument-plugin.h>
+#include <instrument-log/inst_logging.h>
 #include <plugin-api.h>
 #include <plugin-host.h>
 #include <stdarg.h>
@@ -38,8 +39,18 @@ static int setup(void **state) {
 
   snprintf(config.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
   snprintf(config.address, PLUGIN_MAX_STRING_LEN, "%s", "GPIB0::1::INSTR");
-  snprintf(config.custom, PLUGIN_MAX_STRING_LEN, "%s", "{}");
+  assert_int_equal(plugin_initialize(&config), 0);
 
+  return 0;
+}
+
+static int setup_custom_term(void **state) {
+  visa_stub_reset();
+  PluginConfig config = {0};
+
+  snprintf(config.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
+  snprintf(config.address, PLUGIN_MAX_STRING_LEN, "%s", "GPIB0::1::INSTR");
+  snprintf(config.custom, PLUGIN_MAX_STRING_LEN, "%s", "{\"termination\":\"\\r\\n\"}");
   assert_int_equal(plugin_initialize(&config), 0);
 
   return 0;
@@ -69,14 +80,32 @@ static void test_metadata(void **state) {
 }
 
 static void test_no_response(void **state) {
-  PluginCommand cmd = make_cmd("*CLS");
+  PluginCommand cmd = make_cmd("CLS");
+
+  visa_stub_set_response("\n");
   PluginResponse *resp = plugin_response_create();
 
   int rc = plugin_execute_command(&cmd, resp);
 
   assert_int_equal(rc, 0);
   assert_int_equal(plugin_response_count(resp), 0);
+ 
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
 
+
+static void test_no_response_alt_term(void **state) {
+  PluginCommand cmd = make_cmd("CLS");
+
+  visa_stub_set_response("\r\n");
+  PluginResponse *resp = plugin_response_create();
+
+  int rc = plugin_execute_command(&cmd, resp);
+
+  assert_int_equal(rc, 0);
+  assert_int_equal(plugin_response_count(resp), 0);
+ 
   param_storage_free(cmd.params);
   plugin_response_free(resp);
 }
@@ -288,6 +317,24 @@ static void test_fragmented_termination(void **state) {
   plugin_response_free(resp);
 }
 
+
+// ============================================================
+// Group Setup / Teardown
+// ============================================================
+
+static int group_setup(void **state) {
+  (void)state;
+  inst_log_init("visa_test.log", INST_LOG_TRACE, "VISA_TestHarness", 1048576, 3);
+  return 0;
+}
+
+static int group_teardown(void **state) {
+  (void)state;
+  inst_log_flush();
+  inst_log_shutdown();
+  return 0;
+}
+
 // ============================================================
 // Main
 // ============================================================
@@ -303,9 +350,10 @@ int main(void) {
       cmocka_unit_test_setup_teardown(test_array_response, setup, teardown),
       cmocka_unit_test_setup_teardown(test_mixed_response, setup, teardown),
       cmocka_unit_test_setup_teardown(test_delayed_response_before_timeout, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_response_timeout, setup,teardown),
-      cmocka_unit_test_setup_teardown(test_fragmented_termination, setup,teardown),
+      cmocka_unit_test_setup_teardown(test_response_timeout, setup, teardown),
+      cmocka_unit_test_setup_teardown(test_fragmented_termination, setup, teardown),
+      cmocka_unit_test_setup_teardown(test_no_response_alt_term, setup_custom_term, teardown),
   };
 
-  return cmocka_run_group_tests(tests, NULL, NULL);
+  return cmocka_run_group_tests(tests, group_setup, group_teardown);
 }

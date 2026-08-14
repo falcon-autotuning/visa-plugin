@@ -89,6 +89,7 @@ uint8_t plugin_initialize(const PluginConfig *config) {
 
   cJSON *custom_json = cJSON_Parse(config->custom);
   if (custom_json) {
+    VISA_LOG_INFO("Custom json detected");
     g_state.timeout_ms = get_json_int(custom_json, "timeout", 5000);
     term = get_json_string(custom_json, "termination", "\\n");
   }
@@ -96,21 +97,24 @@ uint8_t plugin_initialize(const PluginConfig *config) {
   VISA_LOG_DEBUG(
       "The selected timeout for the instrument in milliseconds is %d\n",
       g_state.timeout_ms);
-  VISA_LOG_DEBUG("The selected termination for the instrument is %s\n", term);
 
-  if (strcmp(term, "\\n") == 0)
+  if (strcmp(term, "\\n") == 0) {
+    VISA_LOG_INFO("The selected termination for the instrument is newline\n");
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              "\n");
-  else if (strcmp(term, "\\r") == 0)
+   } else if (strcmp(term, "\\r") == 0) {
+    VISA_LOG_INFO("The selected termination for the instrument is r\n");
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              "\r");
-  else if (strcmp(term, "\\r\\n") == 0)
+   } else if (strcmp(term, "\\r\\n") == 0) {
+    VISA_LOG_INFO("The selected termination for the instrument is r newline\n");
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              "\r\n");
-  else
+  } else {
+    VISA_LOG_INFO("The selected termination for the instrument is something else\n");
     snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
              term);
-
+  }
   if (custom_json) {
     cJSON_Delete(custom_json);
   }
@@ -288,6 +292,20 @@ static void parse_single_token(const char *token, Variable *var) {
 static int parse_and_fill_response(const PluginCommand *cmd,
                                    PluginResponse *resp, char *buffer,
                                    size_t read_len) {
+  
+  bool is_terminal = true;
+  for (size_t i = 0; i < read_len; i++) {
+    
+    VISA_LOG_INFO("index: %d buffer char: %c termination char: %c \n", i,buffer[i],g_state.termination_char[i]);
+    if (buffer[i] != g_state.termination_char[i]) {
+      is_terminal = false;
+      break;
+    }
+  }
+  if (is_terminal) {
+    return 0;
+  }
+
   size_t comma_count = 0;
   for (size_t i = 0; i < read_len; i++) {
     if (buffer[i] == ',') {
@@ -391,26 +409,23 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
     return 1;
   }
 
-  bool expects_response = (strchr(cmd->command, '?') != NULL);
-  if (!expects_response) {
-    VISA_LOG_DEBUG("Write successful (no response expected)");
-    return 0;
-  }
-
   char *buffer = NULL;
   size_t read_len = 0;
-  uint8_t rc = 1;
-
-  if (visa_read_buffer(&buffer, &read_len, cmd->timeout_ms) == 0) {
-    if (parse_and_fill_response(cmd, resp, buffer, read_len) == 0) {
-      rc = 0;
-    }
-  } else {
+  VISA_LOG_INFO("Preparing response for command %s", cmd->command);
+  if (visa_read_buffer(&buffer, &read_len, cmd->timeout_ms) != 0) {
     VISA_LOG_ERROR("VISA read failed");
-  }
+    return 1;
 
+  } else {
+
+    if (parse_and_fill_response(cmd, resp, buffer, read_len) != 0) {
+      VISA_LOG_ERROR("VISA parse and response filling failed");
+      return 1;
+    }
+  }
+  VISA_LOG_INFO("Finished response for command %s", cmd->command);
   free(buffer);
-  return rc;
+  return 0;
 }
 
 void plugin_shutdown(void) {
