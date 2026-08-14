@@ -294,15 +294,14 @@ static int parse_and_fill_response(const PluginCommand *cmd,
                                    size_t read_len) {
   
   bool is_terminal = true;
-  for (size_t i = 0; i < read_len; i++) {
-    
-    VISA_LOG_INFO("index: %d buffer char: %c termination char: %c \n", i,buffer[i],g_state.termination_char[i]);
+  for (size_t i = 0; i < read_len; i++) { 
     if (buffer[i] != g_state.termination_char[i]) {
       is_terminal = false;
       break;
     }
   }
   if (is_terminal) {
+    VISA_LOG_INFO("No response needed")
     return 0;
   }
 
@@ -317,6 +316,8 @@ static int parse_and_fill_response(const PluginCommand *cmd,
     Variable var = {0};
     parse_single_token(buffer, &var);
     plugin_response_push(resp, &var);
+
+    VISA_LOG_INFO("One response needed, pushing back happily")
     return 0;
   }
 
