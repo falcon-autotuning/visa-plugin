@@ -16,7 +16,8 @@ void visa_stub_reset(void);
 // ============================================================
 // Helper
 // ============================================================
-
+// Currently we detect queries by the inclusion of a '?' in the command string.
+// This is not a robust solution, but it is sufficient for testing purposes.
 static PluginCommand make_cmd(const char *command) {
   PluginCommand cmd = {0};
 
@@ -25,7 +26,7 @@ static PluginCommand make_cmd(const char *command) {
 
   cmd.params = param_storage_create();
   cmd.timeout_ms = 1000;
-
+  cmd.is_query = (strchr(command, '?') != NULL);
   return cmd;
 }
 
@@ -33,7 +34,10 @@ static PluginCommand make_cmd(const char *command) {
 // Setup
 // ============================================================
 
-static int setup(void **state) {
+static int common_setup(const char *test_name, void **state) {
+  (void)state;
+  LOG_INFO("TEST", "LOG", "===== START TEST: %s =====", test_name);
+
   visa_stub_reset();
   PluginConfig config = {0};
 
@@ -43,14 +47,21 @@ static int setup(void **state) {
 
   return 0;
 }
+// Unique wrapper functions for setup
+#define DEFINE_SETUP_WRAPPER(test_func)                                        \
+  static int setup_##test_func(void **state) {                                 \
+    return common_setup(#test_func, state);                                    \
+  }
 
 static int setup_custom_term(void **state) {
+  LOG_INFO("TEST", "LOG", "===== START TEST: test_custom_term =====");
   visa_stub_reset();
   PluginConfig config = {0};
 
   snprintf(config.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
   snprintf(config.address, PLUGIN_MAX_STRING_LEN, "%s", "GPIB0::1::INSTR");
-  snprintf(config.custom, PLUGIN_MAX_STRING_LEN, "%s", "{\"termination\":\"\\r\\n\"}");
+  snprintf(config.custom, PLUGIN_MAX_STRING_LEN, "%s",
+           "{\"termination\":\"\\r\\n\"}");
   assert_int_equal(plugin_initialize(&config), 0);
 
   return 0;
@@ -89,11 +100,10 @@ static void test_no_response(void **state) {
 
   assert_int_equal(rc, 0);
   assert_int_equal(plugin_response_count(resp), 0);
- 
+
   param_storage_free(cmd.params);
   plugin_response_free(resp);
 }
-
 
 static void test_no_response_alt_term(void **state) {
   PluginCommand cmd = make_cmd("CLS");
@@ -105,7 +115,7 @@ static void test_no_response_alt_term(void **state) {
 
   assert_int_equal(rc, 0);
   assert_int_equal(plugin_response_count(resp), 0);
- 
+
   param_storage_free(cmd.params);
   plugin_response_free(resp);
 }
@@ -317,14 +327,14 @@ static void test_fragmented_termination(void **state) {
   plugin_response_free(resp);
 }
 
-
 // ============================================================
 // Group Setup / Teardown
 // ============================================================
 
 static int group_setup(void **state) {
   (void)state;
-  inst_log_init("visa_test.log", INST_LOG_TRACE, "VISA_TestHarness", 1048576, 3);
+  inst_log_init("visa_test.log", INST_LOG_TRACE, "VISA_TestHarness", 1048576,
+                3);
   return 0;
 }
 
@@ -338,21 +348,43 @@ static int group_teardown(void **state) {
 // ============================================================
 // Main
 // ============================================================
-
+DEFINE_SETUP_WRAPPER(test_no_response)
+DEFINE_SETUP_WRAPPER(test_integer_response)
+DEFINE_SETUP_WRAPPER(test_double_response)
+DEFINE_SETUP_WRAPPER(test_bool_response)
+DEFINE_SETUP_WRAPPER(test_string_response)
+DEFINE_SETUP_WRAPPER(test_array_response)
+DEFINE_SETUP_WRAPPER(test_mixed_response)
+DEFINE_SETUP_WRAPPER(test_delayed_response_before_timeout)
+DEFINE_SETUP_WRAPPER(test_response_timeout)
+DEFINE_SETUP_WRAPPER(test_fragmented_termination)
 int main(void) {
   const struct CMUnitTest tests[] = {
-      cmocka_unit_test_setup_teardown(test_no_response, setup, teardown),
+      cmocka_unit_test_setup_teardown(test_no_response, setup_test_no_response,
+                                      teardown),
       cmocka_unit_test(test_metadata),
-      cmocka_unit_test_setup_teardown(test_integer_response, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_double_response, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_bool_response, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_string_response, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_array_response, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_mixed_response, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_delayed_response_before_timeout, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_response_timeout, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_fragmented_termination, setup, teardown),
-      cmocka_unit_test_setup_teardown(test_no_response_alt_term, setup_custom_term, teardown),
+      cmocka_unit_test_setup_teardown(test_integer_response,
+                                      setup_test_integer_response, teardown),
+      cmocka_unit_test_setup_teardown(test_double_response,
+                                      setup_test_double_response, teardown),
+      cmocka_unit_test_setup_teardown(test_bool_response,
+                                      setup_test_bool_response, teardown),
+      cmocka_unit_test_setup_teardown(test_string_response,
+                                      setup_test_string_response, teardown),
+      cmocka_unit_test_setup_teardown(test_array_response,
+                                      setup_test_array_response, teardown),
+      cmocka_unit_test_setup_teardown(test_mixed_response,
+                                      setup_test_mixed_response, teardown),
+      cmocka_unit_test_setup_teardown(
+          test_delayed_response_before_timeout,
+          setup_test_delayed_response_before_timeout, teardown),
+      cmocka_unit_test_setup_teardown(test_response_timeout,
+                                      setup_test_response_timeout, teardown),
+      cmocka_unit_test_setup_teardown(test_fragmented_termination,
+                                      setup_test_fragmented_termination,
+                                      teardown),
+      cmocka_unit_test_setup_teardown(test_no_response_alt_term,
+                                      setup_custom_term, teardown),
   };
 
   return cmocka_run_group_tests(tests, group_setup, group_teardown);

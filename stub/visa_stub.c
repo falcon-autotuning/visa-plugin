@@ -12,7 +12,7 @@
 #endif
 
 static const char *g_stub_response = "1.0,2.0,3.0\n";
-
+static uint32_t g_read_timeout_ms = 2000;
 static uint32_t g_response_delay_ms = 0;
 static size_t g_chunk_size = SIZE_MAX;
 
@@ -74,8 +74,10 @@ ViStatus viOpen(ViSession rm, const char *addr, uint32_t mode, uint32_t timeout,
 
 ViStatus viSetAttribute(ViSession instr, ViAttr attr, uint32_t val) {
   (void)instr;
-  (void)attr;
-  (void)val;
+
+  if (attr == VI_ATTR_TMO_VALUE) {
+    g_read_timeout_ms = val;
+  }
 
   return VI_SUCCESS;
 }
@@ -106,16 +108,26 @@ ViStatus viRead(ViSession instr, ViBuf buf, ViUInt32 count, ViUInt32 *read) {
 
   uint64_t elapsed = now_ms() - g_first_read_time;
 
-  /*
-   * Simulate instrument not having data ready yet.
-   */
   if (elapsed < g_response_delay_ms) {
-    *read = 0;
+    uint64_t wait_needed = g_response_delay_ms - elapsed;
 
-    fprintf(stderr, "[VISA_STUB] Read timeout (%llu/%u ms)\n",
-            (unsigned long long)elapsed, g_response_delay_ms);
+    /*
+     * Simulate instrument not having data ready yet.
+     */
+    if (wait_needed > g_read_timeout_ms) {
+      fprintf(stderr, "[VISA_STUB] Read timeout (%llu/%u ms)\n",
+              (unsigned long long)elapsed, g_response_delay_ms);
+      *read = 0;
+      struct timespec ts = {.tv_sec = (long)(g_read_timeout_ms / 1000),
+                            .tv_nsec = (g_read_timeout_ms % 1000) * 1000000L};
+      nanosleep(&ts, NULL);
+      return VI_ERROR_TMO;
+    }
 
-    return VI_ERROR_TMO;
+    /* wait only until data becomes available */
+    struct timespec ts = {.tv_sec = (long)(wait_needed / 1000),
+                          .tv_nsec = (wait_needed % 1000) * 1000000L};
+    nanosleep(&ts, NULL);
   }
 
   size_t response_len = strlen(g_stub_response);
@@ -153,6 +165,7 @@ ViStatus viRead(ViSession instr, ViBuf buf, ViUInt32 count, ViUInt32 *read) {
   if (g_offset < response_len) {
     return VI_SUCCESS_MAX_CNT;
   }
+  g_first_read_time = 0; // reset for next read
 
   return VI_SUCCESS;
 }
