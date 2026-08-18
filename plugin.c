@@ -434,246 +434,166 @@ static int parse_and_fill_response(const PluginCommand *cmd,
       }
     }
   }
-  // TODO: Fix
-  size_t segment_start = 0;
-  size_t location_idx = 0;
-
+  size_t segment_start = 0; // indexes the segment of the buffer
+  size_t location_idx = 1;  // indexes the locations array
   while (segment_start < buffer_length) {
-
-    size_t segment_end = buffer_length;
-    size_t next_multi_idx = delimiter_count;
-
-    // Find next multi-arg delimiter
-    for (size_t i = location_idx; i < delimiter_count; ++i) {
-      if (locations[i].type == DELIM_MULTI_ARG) {
-        segment_end = locations[i].position;
-        next_multi_idx = i;
-        break;
-      }
-    }
-
-    bool has_array_delimiter = false;
+    // default values
+    size_t segment_end = buffer_length - 1;
+    ssize_t next_multi_idx = -1;
 
     // Examine delimiters inside this segment
-    for (size_t i = location_idx; i < next_multi_idx; ++i) {
-
+    size_t array_delimitter_count = 0;
+    for (size_t i = location_idx; i < delimiter_count; ++i) {
+      if (locations[i].type == DELIM_INVALID) {
+        continue;
+      }
       if (locations[i].type == DELIM_ARRAY) {
-        has_array_delimiter = true;
-        break;
+        array_delimitter_count++;
+        continue;
       }
+      // Find next multi-arg delimiter
+      segment_end = locations[i].position;
+      next_multi_idx = i;
+      break;
     }
 
+    // Compute the length of each segment, excluding the multi-arg delimiter at
+    // the beginning of the segment
     size_t segment_len = segment_end - segment_start;
-
-    if (segment_len > 0) {
-      char *segment = malloc(segment_len + 1);
-
-      memcpy(segment, buffer + segment_start, segment_len);
-
-      segment[segment_len] = '\0';
-
-      if (has_array_delimiter) {
-
-        ArrayValue values[MAX_ARRAY_SIZE];
-
-        size_t count = parse_array(segment, values, MAX_ARRAY_SIZE,
-                                   g_state.array_delimitter);
-
-        bool all_int64 = true;
-
-        for (size_t k = 0; k < count; ++k) {
-          if (values[k].type != ARRAY_VALUE_INT64) {
-            all_int64 = false;
-            break;
-          }
-        }
-
-        uint32_t data_type = all_int64 ? INST_DATA_INT64 : INST_DATA_FLOAT64;
-
-        void *shm_ptr = NULL;
-
-        const char *buf_id = data_manager_create_buffer_zero_copy(
-            g_state.instrument_name, cmd->id, data_type, count, &shm_ptr);
-
-        if (!buf_id || !shm_ptr) {
-          free(segment);
-          return -1;
-        }
-
-        if (all_int64) {
-
-          int64_t *out = (int64_t *)shm_ptr;
-
-          for (size_t k = 0; k < count; ++k) {
-            out[k] = values[k].i64_val;
-          }
-
-        } else {
-
-          double *out = (double *)shm_ptr;
-
-          for (size_t k = 0; k < count; ++k) {
-            out[k] = (values[k].type == ARRAY_VALUE_INT64)
-                         ? (double)values[k].i64_val
-                         : values[k].d_val;
-          }
-        }
-      }
-      if (next_multi_idx == delimiter_count) {
-        break;
-      }
-
-      segment_start = locations[next_multi_idx].position +
-                      strlen(g_state.multi_arg_delimitter);
-
-      location_idx = next_multi_idx + 1;
+    if (segment_len == 0) {
+      VISA_LOG_ERROR("No segment found with a length");
+      free(locations);
+      return 1;
     }
 
-    // TODO: Broken to here
-    if (delimiter_count == 0) {
-      Variable var = {0};
+    // Isolate the segment from the buffer for parsing
+    char *segment = malloc(segment_len + 1);
+    memcpy(segment, buffer + segment_start, segment_len);
+    segment[segment_len] = '\0';
+
+    // Create the variable to hold the parsed value
+    Variable var = {0};
+    if (array_delimitter_count == 0) {
+
       parse_single_token(buffer, &var);
       plugin_response_push(resp, &var);
-      return 0;
-    }
 
-    size_t token_count = delimitter_count + 1;
-    char **tokens = malloc(token_count * sizeof(char *));
-    char *buf_copy = strdup(buffer);
-    size_t idx = 0;
-    char *tok = strtok(buf_copy, g_state.multi_arg_delimitter);
-    while (tok != NULL && idx < token_count) {
-      tokens[idx++] = strdup(tok);
-      tok = strtok(NULL, g_state.multi_arg_delimitter);
-    }
-    token_count = idx;
-    free(buf_copy);
+    } else {
+      // Increment by one since the number of elements is one more than the
+      // number of delimiters
+      size_t array_count = array_delimitter_count + 1;
 
-    bool all_numeric = true;
-    Variable *vars = malloc(token_count * sizeof(Variable));
-    for (size_t i = 0; i < token_count; i++) {
-      memset(&vars[i], 0, sizeof(Variable));
-      parse_single_token(tokens[i], &vars[i]);
-      if (vars[i].type != PARAM_TYPE_INT64 &&
-          vars[i].type != PARAM_TYPE_DOUBLE) {
-        all_numeric = false;
-      }
-    }
-
-    if (all_numeric) {
-      // FIXME: Likely not correct above here
+      ArrayValue *values = malloc(array_count * sizeof(ArrayValue));
+      size_t count =
+          parse_array(segment, values, array_count, g_state.array_delimitter);
       bool all_int64 = true;
-
-      for (size_t i = 0; i < token_count; i++) {
-        if (values[i].type != ARRAY_VALUE_INT64) {
+      for (size_t k = 0; k < count; ++k) {
+        if (values[k].type != ARRAY_VALUE_INT64) {
           all_int64 = false;
           break;
         }
       }
-      uint32_t datatype = all_int64 ? INST_DATA_INT64 : INST_DATA_FLOAT64;
+      uint32_t data_type = all_int64 ? INST_DATA_INT64 : INST_DATA_FLOAT64;
       void *shm_ptr = NULL;
       const char *buf_id = data_manager_create_buffer_zero_copy(
-          g_state.instrument_name, cmd->id, datatype, token_count, &shm_ptr);
-
+          g_state.instrument_name, cmd->id, data_type, count, &shm_ptr);
       if (!buf_id || !shm_ptr) {
-        VISA_LOG_ERROR("Buffer allocation failed (%zu)", token_count);
-        for (size_t i = 0; i < token_count; i++) {
-          free(tokens[i]);
-        }
-        free(tokens);
-        free(vars);
-        return -1;
+        VISA_LOG_ERROR("Buffer allocation failed (%zu)", count);
+        free(segment);
+        free(locations);
+        free(values);
+        return 1;
       }
 
       if (all_int64) {
         int64_t *out = (int64_t *)shm_ptr;
-
-        for (size_t i = 0; i < token_count; i++) {
-          out[i] = values[i].i64_val;
+        for (size_t k = 0; k < count; ++k) {
+          out[k] = values[k].i64_val;
         }
       } else {
         double *out = (double *)shm_ptr;
-
-        for (size_t i = 0; i < token_count; i++) {
-          out[i] = (values[i].type == ARRAY_VALUE_INT64)
-                       ? (double)values[i].i64_val
-                       : values[i].d_val;
+        for (size_t k = 0; k < count; ++k) {
+          out[k] = (values[k].type == ARRAY_VALUE_INT64)
+                       ? (double)values[k].i64_val
+                       : values[k].d_val;
         }
       }
-
-      Variable var = {0};
-      // Any name works here
       snprintf(var.name, sizeof(var.name), "value");
       var.type = PARAM_TYPE_BUFFER;
       snprintf(var.value.str_val, sizeof(var.value.str_val), "%s", buf_id);
 
-      VISA_LOG_DEBUG("Parsed %zu elements -> %s", token_count, buf_id);
+      VISA_LOG_DEBUG("Parsed %zu array elements -> %s", count, buf_id);
       plugin_response_push(resp, &var);
-    } else {
-      for (size_t i = 0; i < token_count; i++) {
-        plugin_response_push(resp, &vars[i]);
-      }
+      free(values);
     }
-
-    for (size_t i = 0; i < token_count; i++) {
-      free(tokens[i]);
+    free(segment);
+    // If next_multi_idx is -1, then we are at the last segment and segment_end
+    // is the end of the buffer
+    if (next_multi_idx == -1) {
+      break;
     }
-    free(tokens);
-    free(vars);
-    return 0;
+    // Fix the two different counters, one for the buffer and one for the
+    // locations array
+    segment_start = locations[next_multi_idx].position +
+                    strlen(g_state.multi_arg_delimitter);
+    location_idx = next_multi_idx + 1;
   }
+
+  VISA_LOG_DEBUG("Parsed %zu elements", delimiter_count);
+  free(locations);
+  return 0;
+}
 
 #define VISA_READ_POLL_MS 100
-  uint8_t plugin_execute_command(const PluginCommand *cmd,
-                                 PluginResponse *resp) {
-    if (!g_state.initialized) {
-      VISA_LOG_ERROR("Not initialized VISA plugin");
+uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
+  if (!g_state.initialized) {
+    VISA_LOG_ERROR("Not initialized VISA plugin");
+    return 1;
+  }
+
+  viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, VISA_READ_POLL_MS);
+
+  char cmd_buf[1024];
+  snprintf(cmd_buf, sizeof(cmd_buf), "%s%s", cmd->command,
+           g_state.termination_char);
+
+  ViUInt32 written = 0;
+  ViStatus write_status =
+      viWrite(g_state.instrument, (ViBuf)cmd_buf, strlen(cmd_buf), &written);
+  if (write_status < VI_SUCCESS) {
+    VISA_LOG_ERROR("Write failed: 0x%08X", write_status);
+    return 1;
+  }
+
+  char *buffer = NULL;
+  size_t read_len = 0;
+  VISA_LOG_DEBUG("Preparing response for command %s", cmd->command);
+  if (cmd->is_query) {
+    VISA_LOG_DEBUG("Is a query, awaiting %d ms for the response",
+                   cmd->timeout_ms);
+    if (visa_read_buffer(&buffer, &read_len, cmd->timeout_ms) != 0) {
+      VISA_LOG_ERROR("VISA read failed");
+      free(buffer);
       return 1;
     }
 
-    viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, VISA_READ_POLL_MS);
-
-    char cmd_buf[1024];
-    snprintf(cmd_buf, sizeof(cmd_buf), "%s%s", cmd->command,
-             g_state.termination_char);
-
-    ViUInt32 written = 0;
-    ViStatus write_status =
-        viWrite(g_state.instrument, (ViBuf)cmd_buf, strlen(cmd_buf), &written);
-    if (write_status < VI_SUCCESS) {
-      VISA_LOG_ERROR("Write failed: 0x%08X", write_status);
+    if (parse_and_fill_response(cmd, resp, buffer, read_len) != 0) {
+      VISA_LOG_ERROR("VISA parse and response filling failed");
+      free(buffer);
       return 1;
     }
-
-    char *buffer = NULL;
-    size_t read_len = 0;
-    VISA_LOG_DEBUG("Preparing response for command %s", cmd->command);
-    if (cmd->is_query) {
-      VISA_LOG_DEBUG("Is a query, awaiting %d ms for the response",
-                     cmd->timeout_ms);
-      if (visa_read_buffer(&buffer, &read_len, cmd->timeout_ms) != 0) {
-        VISA_LOG_ERROR("VISA read failed");
-        free(buffer);
-        return 1;
-      }
-
-      if (parse_and_fill_response(cmd, resp, buffer, read_len) != 0) {
-        VISA_LOG_ERROR("VISA parse and response filling failed");
-        free(buffer);
-        return 1;
-      }
-    }
-    VISA_LOG_DEBUG("Finished command %s", cmd->command);
-    free(buffer);
-    return 0;
   }
+  VISA_LOG_DEBUG("Finished command %s", cmd->command);
+  free(buffer);
+  return 0;
+}
 
-  void plugin_shutdown(void) {
-    if (g_state.instrument)
-      viClose(g_state.instrument);
+void plugin_shutdown(void) {
+  if (g_state.instrument)
+    viClose(g_state.instrument);
 
-    if (g_state.default_rm)
-      viClose(g_state.default_rm);
+  if (g_state.default_rm)
+    viClose(g_state.default_rm);
 
-    g_state.initialized = false;
-  }
+  g_state.initialized = false;
+}
