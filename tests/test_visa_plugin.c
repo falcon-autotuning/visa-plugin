@@ -1,5 +1,7 @@
+#include <instrument-data.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <cmocka.h>
 #include <instrument-plugin.h>
@@ -60,8 +62,21 @@ static int setup_custom_term(void **state) {
 
   snprintf(config.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
   snprintf(config.address, PLUGIN_MAX_STRING_LEN, "%s", "GPIB0::1::INSTR");
+  snprintf(config.custom, PLUGIN_MAX_STRING_LEN, "%s", "{\"term\":\"\\r\\n\"}");
+  assert_int_equal(plugin_initialize(&config), 0);
+
+  return 0;
+}
+static int setup_crazy_instrument(void **state) {
+  LOG_INFO("TEST", "LOG", "===== START TEST: test_crazy_instrument =====");
+  visa_stub_reset();
+  PluginConfig config = {0};
+
+  snprintf(config.instrument_name, PLUGIN_MAX_STRING_LEN, "%s", "test-instr");
+  snprintf(config.address, PLUGIN_MAX_STRING_LEN, "%s", "GPIB0::1::INSTR");
   snprintf(config.custom, PLUGIN_MAX_STRING_LEN, "%s",
-           "{\"termination\":\"\\r\\n\"}");
+           "{\"term\":\"\\r\\n\",\"arr_d\":\"$$\", "
+           "\"arg_d\":\"^^\",\"tout\":2000}");
   assert_int_equal(plugin_initialize(&config), 0);
 
   return 0;
@@ -193,7 +208,7 @@ static void test_string_response(void **state) {
 }
 
 static void test_array_response(void **state) {
-  visa_stub_set_response("1.0,2.0,3.0\n");
+  visa_stub_set_response("1.0 2.0 3.0\n");
 
   PluginCommand cmd = make_cmd("TRACE?");
   PluginResponse *resp = plugin_response_create();
@@ -205,7 +220,14 @@ static void test_array_response(void **state) {
   assert_non_null(v);
   assert_int_equal(v->type, PARAM_TYPE_BUFFER);
   assert_true(strlen(v->value.str_val) > 0);
-
+  DataBuffer *buf = data_manager_get_buffer(v->value.str_val);
+  void *data = data_buffer_data(buf);
+  size_t data_count = data_buffer_element_count(buf);
+  for (size_t i = 0; i < data_count; ++i) {
+    double val = ((double *)data)[i];
+    assert_float_equal(val, (double)(i + 1), 0.0001);
+  }
+  data_manager_release_buffer(v->value.str_val);
   param_storage_free(cmd.params);
   plugin_response_free(resp);
 }
@@ -239,6 +261,116 @@ static void test_mixed_response(void **state) {
   assert_non_null(v3);
   assert_int_equal(v3->type, PARAM_TYPE_BOOL);
   assert_true(v3->value.b_val);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
+static void test_array_and_normal(void **state) {
+  visa_stub_set_response("404,1 2 3 4,4.2,1.1 2.2 3.3 4.4\n");
+
+  PluginCommand cmd = make_cmd("SYSTEM:ERROR?");
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 4);
+
+  const Variable *v0 = plugin_response_get(resp, 0);
+  assert_non_null(v0);
+  assert_int_equal(v0->type, PARAM_TYPE_INT64);
+  assert_int_equal(v0->value.i64_val, 404);
+
+  const Variable *v1 = plugin_response_get(resp, 1);
+  assert_non_null(v1);
+  assert_int_equal(v1->type, PARAM_TYPE_BUFFER);
+  assert_true(strlen(v1->value.str_val) > 0);
+  {
+    DataBuffer *buf = data_manager_get_buffer(v1->value.str_val);
+    void *data = data_buffer_data(buf);
+    size_t data_count = data_buffer_element_count(buf);
+    for (size_t i = 0; i < data_count; ++i) {
+      int64_t val = ((int64_t *)data)[i];
+      assert_int_equal(val, (int64_t)(i + 1));
+    }
+    data_manager_release_buffer(v1->value.str_val);
+  }
+
+  const Variable *v2 = plugin_response_get(resp, 2);
+  assert_non_null(v2);
+  assert_int_equal(v2->type, PARAM_TYPE_DOUBLE);
+  assert_float_equal(v2->value.d_val, 4.2, 0.0001);
+
+  const Variable *v3 = plugin_response_get(resp, 3);
+  assert_non_null(v3);
+  assert_int_equal(v3->type, PARAM_TYPE_BUFFER);
+  assert_true(strlen(v3->value.str_val) > 0);
+  {
+    DataBuffer *buf = data_manager_get_buffer(v3->value.str_val);
+    void *data = data_buffer_data(buf);
+    size_t data_count = data_buffer_element_count(buf);
+    for (size_t i = 0; i < data_count; ++i) {
+      double val = ((double *)data)[i];
+      assert_float_equal(val, (double)(i + 1 + ((double)(i + 1) / 10.0)),
+                         0.0001);
+    }
+    data_manager_release_buffer(v3->value.str_val);
+  }
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
+static void test_crazy_instrument(void **state) {
+  visa_stub_set_response("404^^1$$2$$3$$4^^4.2^^1.1$$2.2$$3.3$$4.4\r\n");
+
+  PluginCommand cmd = make_cmd("SYSTEM:ERROR?");
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 4);
+
+  const Variable *v0 = plugin_response_get(resp, 0);
+  assert_non_null(v0);
+  assert_int_equal(v0->type, PARAM_TYPE_INT64);
+  assert_int_equal(v0->value.i64_val, 404);
+
+  const Variable *v1 = plugin_response_get(resp, 1);
+  assert_non_null(v1);
+  assert_int_equal(v1->type, PARAM_TYPE_BUFFER);
+  assert_true(strlen(v1->value.str_val) > 0);
+  {
+    DataBuffer *buf = data_manager_get_buffer(v1->value.str_val);
+    void *data = data_buffer_data(buf);
+    size_t data_count = data_buffer_element_count(buf);
+    for (size_t i = 0; i < data_count; ++i) {
+      int64_t val = ((int64_t *)data)[i];
+      assert_int_equal(val, (int64_t)(i + 1));
+    }
+    data_manager_release_buffer(v1->value.str_val);
+  }
+
+  const Variable *v2 = plugin_response_get(resp, 2);
+  assert_non_null(v2);
+  assert_int_equal(v2->type, PARAM_TYPE_DOUBLE);
+  assert_float_equal(v2->value.d_val, 4.2, 0.0001);
+
+  const Variable *v3 = plugin_response_get(resp, 3);
+  assert_non_null(v3);
+  assert_int_equal(v3->type, PARAM_TYPE_BUFFER);
+  assert_true(strlen(v3->value.str_val) > 0);
+  {
+    DataBuffer *buf = data_manager_get_buffer(v3->value.str_val);
+    void *data = data_buffer_data(buf);
+    size_t data_count = data_buffer_element_count(buf);
+    for (size_t i = 0; i < data_count; ++i) {
+      double val = ((double *)data)[i];
+      assert_float_equal(val, (double)(i + 1 + ((double)(i + 1) / 10.0)),
+                         0.0001);
+    }
+    data_manager_release_buffer(v3->value.str_val);
+  }
 
   param_storage_free(cmd.params);
   plugin_response_free(resp);
@@ -358,6 +490,7 @@ DEFINE_SETUP_WRAPPER(test_mixed_response)
 DEFINE_SETUP_WRAPPER(test_delayed_response_before_timeout)
 DEFINE_SETUP_WRAPPER(test_response_timeout)
 DEFINE_SETUP_WRAPPER(test_fragmented_termination)
+DEFINE_SETUP_WRAPPER(test_array_and_normal)
 int main(void) {
   const struct CMUnitTest tests[] = {
       cmocka_unit_test_setup_teardown(test_no_response, setup_test_no_response,
@@ -383,9 +516,12 @@ int main(void) {
       cmocka_unit_test_setup_teardown(test_fragmented_termination,
                                       setup_test_fragmented_termination,
                                       teardown),
+      cmocka_unit_test_setup_teardown(test_array_and_normal,
+                                      setup_test_array_and_normal, teardown),
       cmocka_unit_test_setup_teardown(test_no_response_alt_term,
                                       setup_custom_term, teardown),
-  };
+      cmocka_unit_test_setup_teardown(test_crazy_instrument,
+                                      setup_crazy_instrument, teardown)};
 
   return cmocka_run_group_tests(tests, group_setup, group_teardown);
 }

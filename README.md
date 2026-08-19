@@ -26,7 +26,16 @@ The VISA Plugin implements the [Instrument Plugin API](https://github.com/falcon
   - Boolean, integer, double, and string
 - Array responses are transferred via shared memory buffers
 - Configurable timeouts and termination characters
-- Initialization command support via JSON configuration
+
+---
+
+## Custom Arguments
+
+These are optionally passed in through the custom field in the instrument config file.
+**tout** : the instrument specific timeout in milliseconds. If not specified, the default timeout of the instrument-script-server will be used.
+**term** : the instrument specific termination character(s). If not specified, the default termination character is \n (newline).
+**arr_d** : the array delimiter character(s). If not specified, the default array delimiter is a space character. This is used to parse array responses from the instrument into data buffers.
+**arg_d** : the argument delimiter character(s). If not specified, the default argument delimiter is a space character. This is used to parse command arguments sent to the instrument.
 
 ---
 
