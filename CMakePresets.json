@@ -15,8 +15,7 @@
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/ports",
         "CMAKE_MAKE_PROGRAM": "ninja",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "USE_CCACHE": "ON",
-        "BUILD_TESTS": "ON"
+        "USE_CCACHE": "ON"
       }
     },
     {
@@ -31,7 +30,8 @@
         "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-linux-dynamic/share;${sourceDir}/vcpkg_installed",
         "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
         "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
-        "BUILD_PLUGINS": "OFF"
+        "VISA_PLUGIN_BUILD_PLUGIN": "OFF",
+        "BUILD_TESTS": "ON"
       }
     },
     {
@@ -113,6 +113,11 @@
   ],
   "buildPresets": [
     {
+      "name": "linux-clang-test",
+      "configurePreset": "linux-clang-test",
+      "jobs": 0
+    },
+    {
       "name": "linux-clang-debug",
       "configurePreset": "linux-clang-debug",
       "jobs": 0
@@ -144,6 +149,10 @@
     }
   ],
   "testPresets": [
+    {
+      "name": "linux-clang-test",
+      "configurePreset": "linux-clang-test"
+    },
     {
       "name": "linux-clang-debug",
       "configurePreset": "linux-clang-debug"
