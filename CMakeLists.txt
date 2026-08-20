@@ -112,10 +112,10 @@ if(VISA_PLUGIN_BUILD_PLUGIN)
     set(_VISA_INCLUDE_PATHS
     "/usr/include"
     "/usr/include/rsvisa"
-    "/usr/include/nivisa"
+    "/usr/include/ni-visa"
     "/usr/local/include"
     "/usr/local/include/rsvisa"
-    "/usr/local/include/nivisa"
+    "/usr/local/include/ni-visa"
     )
 
     find_library(
