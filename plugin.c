@@ -73,6 +73,50 @@ PluginMetadata plugin_get_metadata(void) {
   return meta;
 }
 
+void plugin_shutdown(void) {
+  if (g_state.instrument)
+    viClose(g_state.instrument);
+
+  if (g_state.default_rm)
+    viClose(g_state.default_rm);
+
+  g_state.initialized = false;
+}
+
+static size_t write_to_instrument(const char *command) {
+  ViUInt32 command_written = 0;
+  ViUInt32 term_written = 0;
+  ViStatus status = VI_SUCCESS;
+
+  size_t length = strlen(command);
+  VISA_LOG_TRACE("About to write command payload of %zu bytes", length);
+  if (length > 0) {
+    status = viWrite(g_state.instrument, (ViBuf)command, (ViUInt32)length,
+                     &command_written);
+    if (status < VI_SUCCESS)
+      goto write_error;
+  }
+
+  size_t term_len = strlen(g_state.termination_char);
+  if (term_len > 0) {
+    status = viWrite(g_state.instrument, (ViBuf)g_state.termination_char,
+                     (ViUInt32)term_len, &term_written);
+    if (status < VI_SUCCESS)
+      goto write_error;
+  }
+
+  VISA_LOG_TRACE("Wrote %u payload bytes and %u termination bytes",
+                 command_written, term_written);
+  return 0;
+
+write_error: {
+  ViChar description[256] = {0};
+  viStatusDesc(g_state.default_rm, status, description);
+  VISA_LOG_ERROR("Write failed: %s", description);
+  return 1;
+}
+}
+
 uint8_t plugin_initialize(const PluginConfig *config) {
   VISA_LOG_INFO("init %s\n", config->instrument_name);
 
@@ -83,6 +127,8 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     VISA_LOG_ERROR("Could not parse the address field in the configuration");
     return 1;
   }
+  VISA_LOG_DEBUG("Preparing to initialize instrument at %s address",
+                 config->address);
 
   snprintf(g_state.resource_address, sizeof(g_state.resource_address), "%s",
            config->address);
@@ -93,6 +139,7 @@ uint8_t plugin_initialize(const PluginConfig *config) {
   const char *multi_arg_delimiter = ",";
 
   cJSON *custom_json = cJSON_Parse(config->custom);
+  VISA_LOG_TRACE("The custom field contains %s", config->custom);
   if (custom_json) {
     VISA_LOG_DEBUG("Custom json detected");
     g_state.timeout_ms = get_json_int(custom_json, "tout", 0);
@@ -159,21 +206,50 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     return 1;
   }
 
-  /* Open a session to the configured instrument without acquiring a lock. */
+  // Perform startup delay before communicating with the instrument
+  if (config->startup_delay != 0) {
+    struct timespec ts = {.tv_sec = (long)(config->startup_delay / 1000),
+                          .tv_nsec = (config->startup_delay % 1000) * 1000000L};
+    nanosleep(&ts, NULL);
+  }
+
+  /* Open a session to the configured instrument acquiring exclusive lock. */
   status = viOpen(g_state.default_rm, g_state.resource_address,
                   VI_EXCLUSIVE_LOCK, VI_NULL, &g_state.instrument);
-
   if (status < VI_SUCCESS) {
     ViChar description[256] = {0};
-
     viStatusDesc(g_state.default_rm, status, description);
     VISA_LOG_ERROR("Unable to open VISA instrument, viOpen failed: %s",
                    description);
-
     viClose(g_state.default_rm);
     g_state.default_rm = VI_NULL;
-
     return 1;
+  }
+
+  // configure the instrument baud_rate
+  status =
+      viSetAttribute(g_state.instrument, VI_ATTR_ASRL_BAUD, config->baud_rate);
+  if (status < VI_SUCCESS) {
+    ViChar description[256] = {0};
+    viStatusDesc(g_state.default_rm, status, description);
+    VISA_LOG_ERROR("Unable to set baud rate on VISA instrument: %s",
+                   description);
+    plugin_shutdown();
+    return 1;
+  }
+
+  // Send init commands
+  for (size_t i = 0; i < STARTUP_COMMANDS; i++) {
+    if (config->init_commands[i][0] != '\0') {
+      VISA_LOG_DEBUG("Preparing to send %dth init command %s", i,
+                     config->init_commands[i]);
+      if (write_to_instrument(config->init_commands[i]) != 0) {
+        VISA_LOG_ERROR("Unable to send init command to VISA instrument: %s",
+                       config->init_commands[i]);
+        plugin_shutdown();
+        return 1;
+      }
+    }
   }
 
   g_state.initialized = true;
@@ -610,16 +686,8 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   }
 
   viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, VISA_READ_POLL_MS);
-
-  char cmd_buf[1024];
-  snprintf(cmd_buf, sizeof(cmd_buf), "%s%s", cmd->command,
-           g_state.termination_char);
-
-  ViUInt32 written = 0;
-  ViStatus write_status =
-      viWrite(g_state.instrument, (ViBuf)cmd_buf, strlen(cmd_buf), &written);
-  if (write_status < VI_SUCCESS) {
-    VISA_LOG_ERROR("Write failed: 0x%08X", write_status);
+  if (write_to_instrument(cmd->command) != 0) {
+    VISA_LOG_ERROR("Failed to execute write command %s", cmd->command);
     return 1;
   }
 
@@ -645,14 +713,4 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   VISA_LOG_DEBUG("Finished command %s", cmd->command);
   free(buffer);
   return 0;
-}
-
-void plugin_shutdown(void) {
-  if (g_state.instrument)
-    viClose(g_state.instrument);
-
-  if (g_state.default_rm)
-    viClose(g_state.default_rm);
-
-  g_state.initialized = false;
 }

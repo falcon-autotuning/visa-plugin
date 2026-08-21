@@ -174,3 +174,20 @@ ViStatus viClose(ViSession sess) {
   (void)sess;
   return VI_SUCCESS;
 }
+
+static char global_status_desc[256] = "Default mock error description";
+
+void visa_stub_set_status_desc(const char *desc_text) {
+  if (desc_text) {
+    strncpy(global_status_desc, desc_text, sizeof(global_status_desc) - 1);
+    global_status_desc[sizeof(global_status_desc) - 1] = '\0';
+  }
+}
+
+ViStatus viStatusDesc(ViSession rm, ViStatus status, ViChar desc[]) {
+  // Fill the passed buffer with your mock error description string
+  if (desc != NULL) {
+    strcpy(desc, global_status_desc);
+  }
+  return VI_SUCCESS;
+}
