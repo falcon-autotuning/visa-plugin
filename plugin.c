@@ -33,8 +33,8 @@ typedef struct {
   char resource_address[PLUGIN_MAX_STRING_LEN];
   uint32_t timeout_ms;
   char termination_char[MAX_TERMINATION_LEN];
-  char array_delimitter[MAX_TERMINATION_LEN];
-  char multi_arg_delimitter[MAX_TERMINATION_LEN];
+  char array_delimiter[MAX_TERMINATION_LEN];
+  char multi_arg_delimiter[MAX_TERMINATION_LEN];
   bool initialized;
 } VISAPluginState;
 
@@ -90,7 +90,7 @@ uint8_t plugin_initialize(const PluginConfig *config) {
   g_state.timeout_ms = 0;
   const char *term = "\\n";
   const char *array_indicator = " ";
-  const char *multi_arg_delimitter = ",";
+  const char *multi_arg_delimiter = ",";
 
   cJSON *custom_json = cJSON_Parse(config->custom);
   if (custom_json) {
@@ -98,7 +98,7 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     g_state.timeout_ms = get_json_int(custom_json, "tout", 0);
     term = get_json_string(custom_json, "term", "\\n");
     array_indicator = get_json_string(custom_json, "arr_d", " ");
-    multi_arg_delimitter = get_json_string(custom_json, "arg_d", ",");
+    multi_arg_delimiter = get_json_string(custom_json, "arg_d", ",");
   }
   if (strlen(term) >= MAX_TERMINATION_LEN) {
     VISA_LOG_ERROR("The selected termination for the instrument is too long");
@@ -130,32 +130,49 @@ uint8_t plugin_initialize(const PluginConfig *config) {
   }
   snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
            term);
-  VISA_LOG_DEBUG("The selected array delimitter for the instrument is: '%s'",
+  VISA_LOG_DEBUG("The selected array delimiter for the instrument is: '%s'",
                  array_indicator);
-  snprintf(g_state.array_delimitter, sizeof(g_state.array_delimitter), "%s",
+  snprintf(g_state.array_delimiter, sizeof(g_state.array_delimiter), "%s",
            array_indicator);
-  VISA_LOG_DEBUG(
-      "The selected multi-arg delimitter for the instrument is: '%s'",
-      multi_arg_delimitter);
-  snprintf(g_state.multi_arg_delimitter, sizeof(g_state.multi_arg_delimitter),
-           "%s", multi_arg_delimitter);
-  if (strcmp(multi_arg_delimitter, array_indicator) == 0) {
+  VISA_LOG_DEBUG("The selected multi-arg delimiter for the instrument is: '%s'",
+                 multi_arg_delimiter);
+  snprintf(g_state.multi_arg_delimiter, sizeof(g_state.multi_arg_delimiter),
+           "%s", multi_arg_delimiter);
+  if (strcmp(multi_arg_delimiter, array_indicator) == 0) {
     VISA_LOG_WARN(
-        "The multi-output delimitter is the same as the array delimitter, this "
+        "The multi-output delimiter is the same as the array delimiter, this "
         "may cause issues with parsing");
   }
   if (custom_json) {
     cJSON_Delete(custom_json);
   }
 
-  if (viOpenDefaultRM(&g_state.default_rm) < VI_SUCCESS) {
-    VISA_LOG_ERROR("Unable to start default rm for VISA");
+  ViStatus status;
+
+  g_state.default_rm = VI_NULL;
+  g_state.instrument = VI_NULL;
+  g_state.initialized = false;
+
+  status = viOpenDefaultRM(&g_state.default_rm);
+  if (status < VI_SUCCESS) {
+    VISA_LOG_ERROR("Unable to open the VISA Resource Manager");
     return 1;
   }
 
-  if (viOpen(g_state.default_rm, g_state.resource_address, VI_NO_LOCK,
-             g_state.timeout_ms, &g_state.instrument) < VI_SUCCESS) {
-    VISA_LOG_ERROR("Unable to lock instrument and check the instrument state");
+  /* Open a session to the configured instrument without acquiring a lock. */
+  status = viOpen(g_state.default_rm, g_state.resource_address, VI_NO_LOCK,
+                  VI_NULL, &g_state.instrument);
+
+  if (status < VI_SUCCESS) {
+    ViChar description[256] = {0};
+
+    viStatusDesc(g_state.default_rm, status, description);
+    VISA_LOG_ERROR("Unable to open VISA instrument, viOpen failed: %s",
+                   description);
+
+    viClose(g_state.default_rm);
+    g_state.default_rm = VI_NULL;
+
     return 1;
   }
 
@@ -356,8 +373,8 @@ typedef struct {
   DelimiterType type;
 } DelimiterLocation;
 static size_t delimiter_length(DelimiterType type) {
-  return (type == DELIM_MULTI_ARG) ? strlen(g_state.multi_arg_delimitter)
-                                   : strlen(g_state.array_delimitter);
+  return (type == DELIM_MULTI_ARG) ? strlen(g_state.multi_arg_delimiter)
+                                   : strlen(g_state.array_delimiter);
 }
 
 static int parse_and_fill_response(const PluginCommand *cmd,
@@ -366,10 +383,10 @@ static int parse_and_fill_response(const PluginCommand *cmd,
   // First sort our the delimiters in the buffer, then we can parse the tokens
   size_t delimiter_count = 0;
   VISA_LOG_TRACE("The multi-arg delimiter is: '%s'",
-                 g_state.multi_arg_delimitter);
+                 g_state.multi_arg_delimiter);
   size_t multi_len = delimiter_length(DELIM_MULTI_ARG);
   VISA_LOG_TRACE("Multi-arg delimiter length: %zu", multi_len);
-  VISA_LOG_TRACE("The array delimiter is: '%s'", g_state.array_delimitter);
+  VISA_LOG_TRACE("The array delimiter is: '%s'", g_state.array_delimiter);
   size_t array_len = delimiter_length(DELIM_ARRAY);
   VISA_LOG_TRACE("Array delimiter length: %zu", array_len);
   bool in_string = false;
@@ -386,14 +403,14 @@ static int parse_and_fill_response(const PluginCommand *cmd,
       continue;
     }
     if (multi_len > 0 && i + multi_len <= buffer_length &&
-        strncmp(buffer + i, g_state.multi_arg_delimitter, multi_len) == 0) {
+        strncmp(buffer + i, g_state.multi_arg_delimiter, multi_len) == 0) {
       VISA_LOG_TRACE("Found multi-arg delimiter at position %zu", i);
       delimiter_count++;
       i += multi_len;
       continue;
     }
     if (array_len > 0 && i + array_len <= buffer_length &&
-        strncmp(buffer + i, g_state.array_delimitter, array_len) == 0) {
+        strncmp(buffer + i, g_state.array_delimiter, array_len) == 0) {
       VISA_LOG_TRACE("Found array delimiter at position %zu", i);
       delimiter_count++;
       i += array_len;
@@ -405,7 +422,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
   }
   VISA_LOG_TRACE("Found %zu delimiters in the buffer", delimiter_count);
 
-  // Now we can fill the locations of delimitters in the buffer
+  // Now we can fill the locations of delimiters in the buffer
   DelimiterLocation *locations =
       malloc(delimiter_count * sizeof(DelimiterLocation));
   size_t idx = 0;
@@ -422,7 +439,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
       continue;
     }
     if (multi_len > 0 && i + multi_len <= buffer_length &&
-        strncmp(buffer + i, g_state.multi_arg_delimitter, multi_len) == 0) {
+        strncmp(buffer + i, g_state.multi_arg_delimiter, multi_len) == 0) {
 
       locations[idx++] =
           (DelimiterLocation){.position = i, .type = DELIM_MULTI_ARG};
@@ -431,7 +448,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
       continue;
     }
     if (array_len > 0 && i + array_len <= buffer_length &&
-        strncmp(buffer + i, g_state.array_delimitter, array_len) == 0) {
+        strncmp(buffer + i, g_state.array_delimiter, array_len) == 0) {
 
       locations[idx++] =
           (DelimiterLocation){.position = i, .type = DELIM_ARRAY};
@@ -441,7 +458,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
     }
     i++;
   }
-  // Now we can filter out obvious invalid delimitters
+  // Now we can filter out obvious invalid delimiters
   size_t valid_count = delimiter_count;
   for (ssize_t i = (ssize_t)valid_count - 1; i >= 0; --i) {
     size_t len = delimiter_length(locations[i].type);
@@ -479,13 +496,13 @@ static int parse_and_fill_response(const PluginCommand *cmd,
     ssize_t next_multi_idx = -1;
 
     // Examine delimiters inside this segment
-    size_t array_delimitter_count = 0;
+    size_t array_delimiter_count = 0;
     for (size_t i = location_idx; i < delimiter_count; ++i) {
       if (locations[i].type == DELIM_INVALID) {
         continue;
       }
       if (locations[i].type == DELIM_ARRAY) {
-        array_delimitter_count++;
+        array_delimiter_count++;
         continue;
       }
       // Find next multi-arg delimiter
@@ -493,8 +510,8 @@ static int parse_and_fill_response(const PluginCommand *cmd,
       next_multi_idx = i;
       break;
     }
-    VISA_LOG_DEBUG("Segment start=%zu end=%zu array_delimitter_count=%zu",
-                   segment_start, segment_end, array_delimitter_count);
+    VISA_LOG_DEBUG("Segment start=%zu end=%zu array_delimiter_count=%zu",
+                   segment_start, segment_end, array_delimiter_count);
 
     // Compute the length of each segment, excluding the multi-arg delimiter at
     // the beginning of the segment
@@ -512,7 +529,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
 
     // Create the variable to hold the parsed value
     Variable var = {0};
-    if (array_delimitter_count == 0) {
+    if (array_delimiter_count == 0) {
       VISA_LOG_TRACE("Parsing single token: '%s'", segment);
 
       parse_single_token(segment, &var);
@@ -522,11 +539,11 @@ static int parse_and_fill_response(const PluginCommand *cmd,
       VISA_LOG_TRACE("Parsing array segment: '%s'", segment);
       // Increment by one since the number of elements is one more than the
       // number of delimiters
-      size_t array_count = array_delimitter_count + 1;
+      size_t array_count = array_delimiter_count + 1;
 
       ArrayValue *values = malloc(array_count * sizeof(ArrayValue));
       size_t count =
-          parse_array(segment, values, array_count, g_state.array_delimitter);
+          parse_array(segment, values, array_count, g_state.array_delimiter);
       bool all_int64 = true;
       for (size_t k = 0; k < count; ++k) {
         if (values[k].type != ARRAY_VALUE_INT64) {
@@ -576,7 +593,7 @@ static int parse_and_fill_response(const PluginCommand *cmd,
     // Fix the two different counters, one for the buffer and one for the
     // locations array
     segment_start = locations[next_multi_idx].position +
-                    strlen(g_state.multi_arg_delimitter);
+                    strlen(g_state.multi_arg_delimiter);
     location_idx = next_multi_idx + 1;
   }
 
