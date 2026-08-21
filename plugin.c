@@ -160,8 +160,8 @@ uint8_t plugin_initialize(const PluginConfig *config) {
   }
 
   /* Open a session to the configured instrument without acquiring a lock. */
-  status = viOpen(g_state.default_rm, g_state.resource_address, VI_NO_LOCK,
-                  VI_NULL, &g_state.instrument);
+  status = viOpen(g_state.default_rm, g_state.resource_address,
+                  VI_EXCLUSIVE_LOCK, VI_NULL, &g_state.instrument);
 
   if (status < VI_SUCCESS) {
     ViChar description[256] = {0};
