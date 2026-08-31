@@ -226,7 +226,7 @@ static void test_double_response_extra_spaces(void **state) {
 }
 
 static void test_bool_response(void **state) {
-  visa_stub_set_response("1\n");
+  visa_stub_set_response("ON\n");
 
   PluginCommand cmd = make_cmd("STAT?");
   PluginResponse *resp = plugin_response_create();

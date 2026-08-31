@@ -35,6 +35,8 @@ typedef struct {
   char termination_char[MAX_TERMINATION_LEN];
   char array_delimiter[MAX_TERMINATION_LEN];
   char multi_arg_delimiter[MAX_TERMINATION_LEN];
+  char high_bool[MAX_TERMINATION_LEN];
+  char low_bool[MAX_TERMINATION_LEN];
   bool initialized;
 } VISAPluginState;
 
@@ -137,6 +139,8 @@ uint8_t plugin_initialize(const PluginConfig *config) {
   const char *term = "\\n";
   const char *array_indicator = ";";
   const char *multi_arg_delimiter = ",";
+  const char *high_bool = "ON";
+  const char *low_bool = "OFF";
 
   cJSON *custom_json = cJSON_Parse(config->custom);
   VISA_LOG_TRACE("The custom field contains %s", config->custom);
@@ -146,6 +150,8 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     term = get_json_string(custom_json, "term", "\\n");
     array_indicator = get_json_string(custom_json, "arr_d", ";");
     multi_arg_delimiter = get_json_string(custom_json, "arg_d", ",");
+    high_bool = get_json_string(custom_json, "h_bool", "ON");
+    low_bool = get_json_string(custom_json, "l_bool", "OFF");
   }
   if (strlen(term) >= MAX_TERMINATION_LEN) {
     VISA_LOG_ERROR("The selected termination for the instrument is too long");
@@ -175,6 +181,12 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     VISA_LOG_DEBUG(
         "The selected termination for the instrument is something else");
   }
+  snprintf(g_state.high_bool, sizeof(g_state.high_bool), "%s", high_bool);
+  VISA_LOG_DEBUG("The selected high boolean for the instrument is: '%s'",
+                 high_bool);
+  snprintf(g_state.low_bool, sizeof(g_state.low_bool), "%s", low_bool);
+  VISA_LOG_DEBUG("The selected low boolean for the instrument is: '%s'",
+                 low_bool);
   snprintf(g_state.termination_char, sizeof(g_state.termination_char), "%s",
            term);
   VISA_LOG_DEBUG("The selected array delimiter for the instrument is: '%s'",
@@ -255,6 +267,13 @@ uint8_t plugin_initialize(const PluginConfig *config) {
                    description);
     plugin_shutdown();
     return 1;
+  }
+  status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
+  if (status < VI_SUCCESS) {
+    ViChar description[256] = {0};
+    viStatusDesc(g_state.default_rm, status, description);
+    VISA_LOG_WARN("Failed to discard stale VISA input data before startup: %s",
+                  status);
   }
 
   // Send init commands
@@ -362,8 +381,8 @@ static int visa_read_buffer(char **out_buf, size_t *out_len,
 
     if (chunk_read > 0) {
       total_read += chunk_read;
-
-      if (total_read >= term_len &&
+      // > term_len ensures something is read other than a termination
+      if (total_read > term_len &&
           memcmp(buffer + total_read - term_len, g_state.termination_char,
                  term_len) == 0) {
         VISA_LOG_TRACE("Termination detected, total_read=%zu", total_read);
@@ -424,14 +443,14 @@ static void parse_single_token(const char *token, Variable *var) {
 
   snprintf(var->name, sizeof(var->name), "value");
 
-  if (strcmp(temp, "1") == 0 || strcasecmp(temp, "ON") == 0) {
+  if (strcmp(temp, g_state.high_bool) == 0) {
     var->type = PARAM_TYPE_BOOL;
     var->value.b_val = true;
     free(temp);
     return;
   }
 
-  if (strcmp(temp, "0") == 0 || strcasecmp(temp, "OFF") == 0) {
+  if (strcmp(temp, g_state.low_bool) == 0) {
     var->type = PARAM_TYPE_BOOL;
     var->value.b_val = false;
     free(temp);
@@ -716,6 +735,13 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   uint32_t timeout_ms =
       (g_state.timeout_ms > 0) ? g_state.timeout_ms : cmd->timeout_ms;
   if (cmd->is_query) {
+    ViStatus status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
+    if (status < VI_SUCCESS) {
+      ViChar description[256] = {0};
+      viStatusDesc(g_state.default_rm, status, description);
+      VISA_LOG_WARN("Failed to discard stale VISA input data before query: %s",
+                    status);
+    }
     VISA_LOG_DEBUG("Is a query, awaiting %d ms for the response", timeout_ms);
     if (visa_read_buffer(&buffer, &read_len, timeout_ms) != 0) {
       VISA_LOG_ERROR("VISA read failed");

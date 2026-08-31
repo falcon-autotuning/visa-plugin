@@ -36,6 +36,8 @@ These are optionally passed in through the custom field in the instrument config
 **term** : the instrument specific termination character(s). If not specified, the default termination character is \n (newline).
 **arr_d** : the array delimiter character(s). If not specified, the default array delimiter is a space character. This is used to parse array responses from the instrument into data buffers.
 **arg_d** : the argument delimiter character(s). If not specified, the default argument delimiter is a space character. This is used to parse command arguments sent to the instrument.
+**h_bool** : the argument defining a High boolean
+**l_bool** : the argument defining a Low boolean
 
 ---
 

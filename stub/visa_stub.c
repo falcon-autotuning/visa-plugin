@@ -191,3 +191,5 @@ ViStatus viStatusDesc(ViSession rm, ViStatus status, ViChar desc[]) {
   }
   return VI_SUCCESS;
 }
+
+ViStatus viFlush(ViSession instr, ViAttr attr) { return VI_SUCCESS; }

@@ -15,6 +15,7 @@ typedef void *ViObject;
 #define VI_NULL 0
 #define VI_EXCLUSIVE_LOCK 4
 #define VI_SUCCESS_MAX_CNT 0x3FFF0006
+#define VI_IO_IN_BUF_DISCARD 5
 
 #define VI_NO_LOCK 0
 #define VI_ATTR_TMO_VALUE 0x3FFF001A
@@ -34,6 +35,8 @@ ViStatus viWrite(ViSession instr, ViBuf buf, ViUInt32 count, ViUInt32 *written);
 ViStatus viRead(ViSession instr, ViBuf buf, ViUInt32 count, ViUInt32 *read);
 
 ViStatus viClose(ViSession sess);
+
+ViStatus viFlush(ViSession instr, ViAttr attr);
 
 ViStatus viStatusDesc(ViSession rm, ViStatus status, ViChar desc[]);
 
