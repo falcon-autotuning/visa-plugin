@@ -153,8 +153,62 @@ static void test_integer_response(void **state) {
   plugin_response_free(resp);
 }
 
+static void test_integer_response_extra_space(void **state) {
+  visa_stub_set_response(" 42\n");
+
+  PluginCommand cmd = make_cmd("MEAS?");
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 1);
+  const Variable *v = plugin_response_get(resp, 0);
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_INT64);
+  assert_int_equal(v->value.i64_val, 42);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
+static void test_integer_response_extra_spaces(void **state) {
+  visa_stub_set_response("  42\n");
+
+  PluginCommand cmd = make_cmd("MEAS?");
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 1);
+  const Variable *v = plugin_response_get(resp, 0);
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_INT64);
+  assert_int_equal(v->value.i64_val, 42);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
 static void test_double_response(void **state) {
   visa_stub_set_response("3.14\n");
+
+  PluginCommand cmd = make_cmd("MEAS?");
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 1);
+  const Variable *v = plugin_response_get(resp, 0);
+  assert_non_null(v);
+  assert_int_equal(v->type, PARAM_TYPE_DOUBLE);
+  assert_float_equal(v->value.d_val, 3.14, 0.0001);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
+static void test_double_response_extra_spaces(void **state) {
+  visa_stub_set_response("  3.14 \n");
 
   PluginCommand cmd = make_cmd("MEAS?");
   PluginResponse *resp = plugin_response_create();
@@ -208,7 +262,7 @@ static void test_string_response(void **state) {
 }
 
 static void test_array_response(void **state) {
-  visa_stub_set_response("1.0 2.0 3.0\n");
+  visa_stub_set_response("1.0;2.0;3.0\n");
 
   PluginCommand cmd = make_cmd("TRACE?");
   PluginResponse *resp = plugin_response_create();
@@ -266,8 +320,76 @@ static void test_mixed_response(void **state) {
   plugin_response_free(resp);
 }
 
+static void test_mixed_response_with_spaces(void **state) {
+  visa_stub_set_response("404, \"No error\", 4.2, ON\n");
+
+  PluginCommand cmd = make_cmd("SYSTEM:ERROR?");
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 4);
+
+  const Variable *v0 = plugin_response_get(resp, 0);
+  assert_non_null(v0);
+  assert_int_equal(v0->type, PARAM_TYPE_INT64);
+  assert_int_equal(v0->value.i64_val, 404);
+
+  const Variable *v1 = plugin_response_get(resp, 1);
+  assert_non_null(v1);
+  assert_int_equal(v1->type, PARAM_TYPE_STRING);
+  assert_string_equal(v1->value.str_val, "No error");
+
+  const Variable *v2 = plugin_response_get(resp, 2);
+  assert_non_null(v2);
+  assert_int_equal(v2->type, PARAM_TYPE_DOUBLE);
+  assert_float_equal(v2->value.d_val, 4.2, 0.0001);
+
+  const Variable *v3 = plugin_response_get(resp, 3);
+  assert_non_null(v3);
+  assert_int_equal(v3->type, PARAM_TYPE_BOOL);
+  assert_true(v3->value.b_val);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
+static void test_mixed_response_with_even_more_spaces(void **state) {
+  visa_stub_set_response("404 , \"No error\" , 4.2 , ON\n");
+
+  PluginCommand cmd = make_cmd("SYSTEM:ERROR?");
+  PluginResponse *resp = plugin_response_create();
+
+  assert_int_equal(plugin_execute_command(&cmd, resp), 0);
+
+  assert_int_equal(plugin_response_count(resp), 4);
+
+  const Variable *v0 = plugin_response_get(resp, 0);
+  assert_non_null(v0);
+  assert_int_equal(v0->type, PARAM_TYPE_INT64);
+  assert_int_equal(v0->value.i64_val, 404);
+
+  const Variable *v1 = plugin_response_get(resp, 1);
+  assert_non_null(v1);
+  assert_int_equal(v1->type, PARAM_TYPE_STRING);
+  assert_string_equal(v1->value.str_val, "No error");
+
+  const Variable *v2 = plugin_response_get(resp, 2);
+  assert_non_null(v2);
+  assert_int_equal(v2->type, PARAM_TYPE_DOUBLE);
+  assert_float_equal(v2->value.d_val, 4.2, 0.0001);
+
+  const Variable *v3 = plugin_response_get(resp, 3);
+  assert_non_null(v3);
+  assert_int_equal(v3->type, PARAM_TYPE_BOOL);
+  assert_true(v3->value.b_val);
+
+  param_storage_free(cmd.params);
+  plugin_response_free(resp);
+}
+
 static void test_array_and_normal(void **state) {
-  visa_stub_set_response("404,1 2 3 4,4.2,1.1 2.2 3.3 4.4\n");
+  visa_stub_set_response("404,1;2;3;4,4.2,1.1;2.2;3.3;4.4\n");
 
   PluginCommand cmd = make_cmd("SYSTEM:ERROR?");
   PluginResponse *resp = plugin_response_create();
@@ -482,11 +604,16 @@ static int group_teardown(void **state) {
 // ============================================================
 DEFINE_SETUP_WRAPPER(test_no_response)
 DEFINE_SETUP_WRAPPER(test_integer_response)
+DEFINE_SETUP_WRAPPER(test_integer_response_extra_space)
+DEFINE_SETUP_WRAPPER(test_integer_response_extra_spaces)
 DEFINE_SETUP_WRAPPER(test_double_response)
+DEFINE_SETUP_WRAPPER(test_double_response_extra_spaces)
 DEFINE_SETUP_WRAPPER(test_bool_response)
 DEFINE_SETUP_WRAPPER(test_string_response)
 DEFINE_SETUP_WRAPPER(test_array_response)
 DEFINE_SETUP_WRAPPER(test_mixed_response)
+DEFINE_SETUP_WRAPPER(test_mixed_response_with_spaces)
+DEFINE_SETUP_WRAPPER(test_mixed_response_with_even_more_spaces)
 DEFINE_SETUP_WRAPPER(test_delayed_response_before_timeout)
 DEFINE_SETUP_WRAPPER(test_response_timeout)
 DEFINE_SETUP_WRAPPER(test_fragmented_termination)
@@ -498,8 +625,17 @@ int main(void) {
       cmocka_unit_test(test_metadata),
       cmocka_unit_test_setup_teardown(test_integer_response,
                                       setup_test_integer_response, teardown),
+      cmocka_unit_test_setup_teardown(test_integer_response_extra_space,
+                                      setup_test_integer_response_extra_space,
+                                      teardown),
+      cmocka_unit_test_setup_teardown(test_integer_response_extra_spaces,
+                                      setup_test_integer_response_extra_spaces,
+                                      teardown),
       cmocka_unit_test_setup_teardown(test_double_response,
                                       setup_test_double_response, teardown),
+      cmocka_unit_test_setup_teardown(test_double_response_extra_spaces,
+                                      setup_test_double_response_extra_spaces,
+                                      teardown),
       cmocka_unit_test_setup_teardown(test_bool_response,
                                       setup_test_bool_response, teardown),
       cmocka_unit_test_setup_teardown(test_string_response,
@@ -508,6 +644,12 @@ int main(void) {
                                       setup_test_array_response, teardown),
       cmocka_unit_test_setup_teardown(test_mixed_response,
                                       setup_test_mixed_response, teardown),
+      cmocka_unit_test_setup_teardown(test_mixed_response_with_spaces,
+                                      setup_test_mixed_response_with_spaces,
+                                      teardown),
+      cmocka_unit_test_setup_teardown(
+          test_mixed_response_with_even_more_spaces,
+          setup_test_mixed_response_with_even_more_spaces, teardown),
       cmocka_unit_test_setup_teardown(
           test_delayed_response_before_timeout,
           setup_test_delayed_response_before_timeout, teardown),

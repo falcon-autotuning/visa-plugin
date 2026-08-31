@@ -135,7 +135,7 @@ uint8_t plugin_initialize(const PluginConfig *config) {
 
   g_state.timeout_ms = 0;
   const char *term = "\\n";
-  const char *array_indicator = " ";
+  const char *array_indicator = ";";
   const char *multi_arg_delimiter = ",";
 
   cJSON *custom_json = cJSON_Parse(config->custom);
@@ -144,7 +144,7 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     VISA_LOG_DEBUG("Custom json detected");
     g_state.timeout_ms = get_json_int(custom_json, "tout", 0);
     term = get_json_string(custom_json, "term", "\\n");
-    array_indicator = get_json_string(custom_json, "arr_d", " ");
+    array_indicator = get_json_string(custom_json, "arr_d", ";");
     multi_arg_delimiter = get_json_string(custom_json, "arg_d", ",");
   }
   if (strlen(term) >= MAX_TERMINATION_LEN) {
@@ -185,10 +185,29 @@ uint8_t plugin_initialize(const PluginConfig *config) {
                  multi_arg_delimiter);
   snprintf(g_state.multi_arg_delimiter, sizeof(g_state.multi_arg_delimiter),
            "%s", multi_arg_delimiter);
+  if (strstr(multi_arg_delimiter, array_indicator) == 0) {
+    VISA_LOG_WARN("The array delimiter is contained within the multi-ouput "
+                  "delimiter, this may cause issues with parsing");
+  }
+  if (strstr(array_indicator, multi_arg_delimiter) == 0) {
+    VISA_LOG_WARN(
+        "The multi-output delimiter is contained within the array delimiter"
+        "delimiter, this may cause issues with parsing");
+  }
   if (strcmp(multi_arg_delimiter, array_indicator) == 0) {
     VISA_LOG_WARN(
         "The multi-output delimiter is the same as the array delimiter, this "
         "may cause issues with parsing");
+  }
+  if (strchr(multi_arg_delimiter, ' ') == 0) {
+    VISA_LOG_WARN(
+        "The multi-output delimiter contains a space, this may cause issues "
+        "with parsing. Spaces are wild cards and are ignored when parsing");
+  }
+  if (strchr(array_indicator, ' ') == 0) {
+    VISA_LOG_WARN(
+        "The array delimiter contains a space, this may cause issues "
+        "with parsing. Spaces are wild cards and are ignored when parsing");
   }
   if (custom_json) {
     cJSON_Delete(custom_json);
