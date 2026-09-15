@@ -38,7 +38,7 @@ build: configure
 
 test: build
 	@echo "Running tests for $(PRESET)..."
-	ctest --preset $(PRESET) -V
+	ctest --preset $(PRESET) -V 
 
 install: build
 	@echo "Installing $(PRESET) to system..."

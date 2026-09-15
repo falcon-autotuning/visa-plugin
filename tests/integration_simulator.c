@@ -71,11 +71,6 @@ static int setup_serial(void **state) {
            "{\"term\":\"\\\\n\"}");
   *state = ctx;
 
-  fprintf(stderr, "Serial device='%s'\n",
-          scpi_simulator_serial_device(&ctx->sim));
-  fprintf(stderr, "Address='%s'\n", ctx->config.address);
-  sleep(300);
-
   return 0;
 }
 static int teardown(void **state) {
@@ -247,7 +242,7 @@ static void test_double_set_then_query(void **state) {
   VisaTestContext *ctx = *state;
 
   scpi_simulator_expect_persistent(&ctx->sim, "SET", "\n");
-  scpi_simulator_expect(&ctx->sim, "GET_VOLT", "5.2\n");
+  scpi_simulator_expect(&ctx->sim, "GET_VOLT", "5.255555\n");
 
   assert_int_equal(plugin_initialize(&ctx->config), 0);
   PluginCommand cmd1 = {0};
@@ -269,7 +264,7 @@ static void test_double_set_then_query(void **state) {
     const Variable *v = plugin_response_get(resp2, 0);
     assert_non_null(v);
     assert_int_equal(v->type, PARAM_TYPE_DOUBLE);
-    assert_double_equal(v->value.d_val, 5.2, EPSILON);
+    assert_double_equal(v->value.d_val, 5.255555, EPSILON);
   }
   plugin_response_free(resp1);
   plugin_response_free(resp2);

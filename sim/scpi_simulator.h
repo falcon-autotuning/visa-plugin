@@ -11,51 +11,47 @@
 #define SCPI_COMMAND_LOG_SIZE 16384
 #define SCPI_RECV_BUFFER_SIZE 8192
 
+#define SCPI_MAX_COMMAND_LEN 512
+#define SCPI_MAX_RESPONSE_LEN 8192
+
 typedef struct {
-  char *command;
-  char *response;
+  char command[SCPI_MAX_COMMAND_LEN];
+  char response[SCPI_MAX_RESPONSE_LEN];
 
   bool persistent;
-  bool consumed;
-
-  size_t hit_count;
 } ScheduledResponse;
 typedef enum { SCPI_TRANSPORT_TCP, SCPI_TRANSPORT_SERIAL } ScpiTransportType;
 
 typedef struct {
-  ScpiTransportType transport_type;
-
-  // for tcp only
-  uint16_t port;
-
-  int server_fd;
-  int client_fd;
-
   bool running;
-
   bool server_ready;
   bool client_connected;
 
-  // for serial only
-  int serial_fd;
-  char serial_device[256];
-
-  pthread_t thread;
-
-  pthread_mutex_t mutex;
-
-  pthread_cond_t ready_cond;
-  pthread_cond_t connected_cond;
-  char command_terminator[SCPI_MAX_TERMINATOR_LEN];
-
-  pthread_cond_t command_cond;
   size_t total_commands_handled;
 
-  ScheduledResponse responses[SCPI_MAX_RESPONSES];
-
-  size_t response_count;
-
+  size_t hit_counts[SCPI_MAX_RESPONSES];
+  bool consumed[SCPI_MAX_RESPONSES];
   char command_log[SCPI_COMMAND_LOG_SIZE];
+
+  ScheduledResponse responses[SCPI_MAX_RESPONSES];
+  size_t response_count;
+} ScpiSharedState;
+typedef struct {
+  int server_fd;
+  int client_fd;
+  int serial_fd;
+} WorkerState;
+typedef struct {
+  ScpiTransportType transport_type;
+  WorkerState worker;
+
+  pid_t child_pid;
+  ScpiSharedState *shared;
+
+  uint16_t port;
+  char serial_device[256];
+
+  char command_terminator[SCPI_MAX_TERMINATOR_LEN];
 } ScpiSimulator;
 
 /*

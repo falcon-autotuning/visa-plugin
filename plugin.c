@@ -11,6 +11,7 @@
 #include <string.h>
 
 // VISA
+#include <unistd.h>
 #include <visa.h>
 
 #ifdef _WIN32
@@ -51,6 +52,15 @@ static const char *get_json_string(cJSON *json, const char *key,
 static int get_json_int(cJSON *json, const char *key, int def) {
   cJSON *item = cJSON_GetObjectItem(json, key);
   return (item && cJSON_IsNumber(item)) ? item->valueint : def;
+}
+static uint64_t get_time_us(void) {
+#ifdef _WIN32
+  return GetTickCount64();
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ((uint64_t)ts.tv_sec * 1000000ULL) + ((uint64_t)ts.tv_nsec / 1000ULL);
+#endif
 }
 static uint64_t get_time_ms(void) {
 #ifdef _WIN32
@@ -722,18 +732,32 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   }
 
   viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, VISA_READ_POLL_MS);
+  // FIX: maybe
+  // if (cmd->is_query) {
+  //   ViStatus status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
+  //   if (status < VI_SUCCESS) {
+  //     ViChar description[256] = {0};
+  //     viStatusDesc(g_state.default_rm, status, description);
+  //     VISA_LOG_WARN("Failed to discard stale VISA input data before write:
+  //     %s",
+  //                   status);
+  //   }
+  // }
   if (write_to_instrument(cmd->command) != 0) {
     VISA_LOG_ERROR("Failed to execute write command %s", cmd->command);
     return 1;
   }
-
+  VISA_LOG_WARN("write finished at %llu", (unsigned long long)get_time_us());
   char *buffer = NULL;
   size_t read_len = 0;
-  VISA_LOG_DEBUG("Preparing response for command %s", cmd->command);
+  VISA_LOG_WARN("Preparing response for command %s", cmd->command);
   uint32_t timeout_ms =
       (g_state.timeout_ms > 0) ? g_state.timeout_ms : cmd->timeout_ms;
   if (cmd->is_query) {
+    // TODO: remove this badly placed flush
+    VISA_LOG_WARN("flush starting at %llu", (unsigned long long)get_time_us());
     ViStatus status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
+    VISA_LOG_WARN("flush finished at %llu", (unsigned long long)get_time_us());
     if (status < VI_SUCCESS) {
       ViChar description[256] = {0};
       viStatusDesc(g_state.default_rm, status, description);
@@ -741,6 +765,7 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
                     status);
     }
     VISA_LOG_DEBUG("Is a query, awaiting %d ms for the response", timeout_ms);
+    VISA_LOG_WARN("starting read at %llu", (unsigned long long)get_time_us());
     if (visa_read_buffer(&buffer, &read_len, timeout_ms) != 0) {
       VISA_LOG_ERROR("VISA read failed");
       free(buffer);
