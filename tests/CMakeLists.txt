@@ -97,13 +97,17 @@ add_test(
 find_path(
   RSVISA_INCLUDE_DIR
   NAMES visa.h
-  PATH_SUFFIXES rsvisa
+  PATH_SUFFIXES
+    rsvisa
+    ni-visa
   REQUIRED
 )
 
 find_library(
   RSVISA_LIBRARY
-  NAMES rsvisa
+  NAMES
+    rsvisa
+    visa
   REQUIRED
 )
 
