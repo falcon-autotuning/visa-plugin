@@ -732,17 +732,17 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   }
 
   viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, VISA_READ_POLL_MS);
-  // FIX: maybe
-  // if (cmd->is_query) {
-  //   ViStatus status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
-  //   if (status < VI_SUCCESS) {
-  //     ViChar description[256] = {0};
-  //     viStatusDesc(g_state.default_rm, status, description);
-  //     VISA_LOG_WARN("Failed to discard stale VISA input data before write:
-  //     %s",
-  //                   status);
-  //   }
-  // }
+  if (cmd->is_query) {
+    VISA_LOG_WARN("flush starting at %llu", (unsigned long long)get_time_us());
+    ViStatus status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
+    VISA_LOG_WARN("flush finished at %llu", (unsigned long long)get_time_us());
+    if (status < VI_SUCCESS) {
+      ViChar description[256] = {0};
+      viStatusDesc(g_state.default_rm, status, description);
+      VISA_LOG_WARN("Failed to discard stale VISA input data before write:",
+                    "%s", status);
+    }
+  }
   if (write_to_instrument(cmd->command) != 0) {
     VISA_LOG_ERROR("Failed to execute write command %s", cmd->command);
     return 1;
@@ -754,10 +754,7 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   uint32_t timeout_ms =
       (g_state.timeout_ms > 0) ? g_state.timeout_ms : cmd->timeout_ms;
   if (cmd->is_query) {
-    // TODO: remove this badly placed flush
-    VISA_LOG_WARN("flush starting at %llu", (unsigned long long)get_time_us());
     ViStatus status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
-    VISA_LOG_WARN("flush finished at %llu", (unsigned long long)get_time_us());
     if (status < VI_SUCCESS) {
       ViChar description[256] = {0};
       viStatusDesc(g_state.default_rm, status, description);
