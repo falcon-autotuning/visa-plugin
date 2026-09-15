@@ -197,11 +197,11 @@ uint8_t plugin_initialize(const PluginConfig *config) {
                  multi_arg_delimiter);
   snprintf(g_state.multi_arg_delimiter, sizeof(g_state.multi_arg_delimiter),
            "%s", multi_arg_delimiter);
-  if (strstr(multi_arg_delimiter, array_indicator) == 0) {
-    VISA_LOG_WARN("The array delimiter is contained within the multi-ouput "
+  if (strstr(multi_arg_delimiter, array_indicator) != NULL) {
+    VISA_LOG_WARN("The array delimiter is contained within the multi-output "
                   "delimiter, this may cause issues with parsing");
   }
-  if (strstr(array_indicator, multi_arg_delimiter) == 0) {
+  if (strstr(array_indicator, multi_arg_delimiter) != NULL) {
     VISA_LOG_WARN(
         "The multi-output delimiter is contained within the array delimiter"
         "delimiter, this may cause issues with parsing");
@@ -211,12 +211,12 @@ uint8_t plugin_initialize(const PluginConfig *config) {
         "The multi-output delimiter is the same as the array delimiter, this "
         "may cause issues with parsing");
   }
-  if (strchr(multi_arg_delimiter, ' ') == 0) {
+  if (strchr(multi_arg_delimiter, ' ') != NULL) {
     VISA_LOG_WARN(
         "The multi-output delimiter contains a space, this may cause issues "
         "with parsing. Spaces are wild cards and are ignored when parsing");
   }
-  if (strchr(array_indicator, ' ') == 0) {
+  if (strchr(array_indicator, ' ') != NULL) {
     VISA_LOG_WARN(
         "The array delimiter contains a space, this may cause issues "
         "with parsing. Spaces are wild cards and are ignored when parsing");
@@ -263,10 +263,8 @@ uint8_t plugin_initialize(const PluginConfig *config) {
   if (status < VI_SUCCESS) {
     ViChar description[256] = {0};
     viStatusDesc(g_state.default_rm, status, description);
-    VISA_LOG_ERROR("Unable to set baud rate on VISA instrument: %s",
-                   description);
-    plugin_shutdown();
-    return 1;
+    VISA_LOG_WARN("Unable to set baud rate on VISA instrument: %s",
+                  description);
   }
   status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
   if (status < VI_SUCCESS) {

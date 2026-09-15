@@ -89,38 +89,112 @@ add_test(
   COMMAND test_visa_plugin
 )
 
-# --------------------------------------------------------
-# Optional integration-test plugin
-# --------------------------------------------------------
+## Integration tests
+
 #
-# This builds an actual plugin MODULE using the stub backend. It allows an
-# integration test to verify that the host can discover and load the plugin.
+# Try to locate RsVisa
 #
-# It is deliberately a different target from the production visa_plugin.
-option(
-  VISA_PLUGIN_BUILD_TEST_MODULE
-  "Build a stub-backed plugin module for integration testing"
-  OFF
+find_path(
+  RSVISA_INCLUDE_DIR
+  NAMES visa.h
+  PATH_SUFFIXES rsvisa
+  REQUIRED
 )
 
-if(VISA_PLUGIN_BUILD_TEST_MODULE)
-  add_instrument_plugin(
-    visa_plugin_test_module
-    SOURCES
-      "${PROJECT_SOURCE_DIR}/plugin.c"
-    LINK_LIBRARIES
-      visa_stub
-      cjson
-      instrument-log::instrument-log
-      instrument-data::instrument-data
-    INCLUDE_DIRS
-      "${PROJECT_SOURCE_DIR}/stub"
-  )
+find_library(
+  RSVISA_LIBRARY
+  NAMES rsvisa
+  REQUIRED
+)
 
-  set_target_properties(visa_plugin_test_module
-    PROPERTIES
-      FOLDER "Tests"
-  )
-
-  # Do not install this target. It is strictly a test artifact.
+if(NOT RSVISA_INCLUDE_DIR)
+  message(FATAL_ERROR "Could not locate visa.h for RsVisa")
 endif()
+
+if(NOT RSVISA_LIBRARY)
+  message(FATAL_ERROR "Could not locate RsVisa library")
+endif()
+
+message(STATUS "RsVisa include: ${RSVISA_INCLUDE_DIR}")
+message(STATUS "RsVisa library: ${RSVISA_LIBRARY}")
+
+# --------------------------------------------------------
+# SCPI simulator
+# --------------------------------------------------------
+
+add_library(scpi_simulator STATIC
+    "${PROJECT_SOURCE_DIR}/sim/scpi_simulator.c"
+)
+
+target_include_directories(scpi_simulator
+    PUBLIC
+      "${PROJECT_SOURCE_DIR}/sim"
+)
+
+set_target_properties(scpi_simulator
+    PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+)
+
+# --------------------------------------------------------
+# Plugin compiled against REAL VISA
+# --------------------------------------------------------
+
+add_library(visa_plugin_integration_core STATIC
+    ${PROJECT_SOURCE_DIR}/plugin.c
+)
+
+target_compile_definitions(visa_plugin_integration_core
+    PRIVATE
+        INSTRUMENT_PLUGIN_BUILD
+)
+
+target_include_directories(visa_plugin_integration_core
+    PRIVATE
+        ${RSVISA_INCLUDE_DIR}
+)
+
+target_link_libraries(visa_plugin_integration_core
+    PRIVATE
+        ${RSVISA_LIBRARY}
+        cjson
+        instrument-plugin-api::plugin
+        instrument-log::instrument-log
+        instrument-data::instrument-data
+)
+
+set_target_properties(visa_plugin_integration_core
+    PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+)
+
+# --------------------------------------------------------
+# Integration test executable
+# --------------------------------------------------------
+
+add_executable(integration_simulator
+    integration_simulator.c
+)
+
+target_include_directories(integration_simulator
+    PRIVATE
+        ${RSVISA_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(integration_simulator
+    PRIVATE
+        visa_plugin_integration_core
+        scpi_simulator
+
+        cmocka::cmocka
+        instrument-plugin-api::host
+
+        ${RSVISA_LIBRARY}
+)
+
+
+add_test(
+    NAME integration_simulator
+    COMMAND integration_simulator
+)
