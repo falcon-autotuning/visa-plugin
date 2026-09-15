@@ -754,13 +754,6 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   uint32_t timeout_ms =
       (g_state.timeout_ms > 0) ? g_state.timeout_ms : cmd->timeout_ms;
   if (cmd->is_query) {
-    ViStatus status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
-    if (status < VI_SUCCESS) {
-      ViChar description[256] = {0};
-      viStatusDesc(g_state.default_rm, status, description);
-      VISA_LOG_WARN("Failed to discard stale VISA input data before query: %s",
-                    status);
-    }
     VISA_LOG_DEBUG("Is a query, awaiting %d ms for the response", timeout_ms);
     VISA_LOG_WARN("starting read at %llu", (unsigned long long)get_time_us());
     if (visa_read_buffer(&buffer, &read_len, timeout_ms) != 0) {
