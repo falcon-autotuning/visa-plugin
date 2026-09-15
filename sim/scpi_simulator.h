@@ -20,8 +20,12 @@ typedef struct {
 
   size_t hit_count;
 } ScheduledResponse;
+typedef enum { SCPI_TRANSPORT_TCP, SCPI_TRANSPORT_SERIAL } ScpiTransportType;
 
 typedef struct {
+  ScpiTransportType transport_type;
+
+  // for tcp only
   uint16_t port;
 
   int server_fd;
@@ -32,6 +36,10 @@ typedef struct {
   bool server_ready;
   bool client_connected;
 
+  // for serial only
+  int serial_fd;
+  char serial_device[256];
+
   pthread_t thread;
 
   pthread_mutex_t mutex;
@@ -39,6 +47,9 @@ typedef struct {
   pthread_cond_t ready_cond;
   pthread_cond_t connected_cond;
   char command_terminator[SCPI_MAX_TERMINATOR_LEN];
+
+  pthread_cond_t command_cond;
+  size_t total_commands_handled;
 
   ScheduledResponse responses[SCPI_MAX_RESPONSES];
 
@@ -50,8 +61,14 @@ typedef struct {
 /*
  * Starts worker thread and blocks until server is listening.
  */
-void scpi_simulator_start(ScpiSimulator *sim, uint16_t port,
-                          const char *command_terminator);
+void scpi_simulator_start_tcp(ScpiSimulator *sim, uint16_t port,
+                              const char *command_terminator);
+
+/*
+ * Starts worker serial thread and blocks until server is listening.
+ */
+void scpi_simulator_start_serial(ScpiSimulator *sim, const char *serial_device,
+                                 const char *command_terminator);
 
 /*
  * Stops simulator and frees resources.
@@ -93,4 +110,13 @@ bool scpi_simulator_client_connected(ScpiSimulator *sim);
  */
 const char *scpi_simulator_command_log(ScpiSimulator *sim);
 
+/*
+ * Waits async style until a certain number of hits on a command is reached.
+ */
+bool scpi_simulator_wait_for_hits(ScpiSimulator *sim, const char *command,
+                                  size_t hits, uint32_t timeout_ms);
+/*
+ * Exposes the PTY that is created
+ */
+const char *scpi_simulator_serial_device(ScpiSimulator *sim);
 #endif

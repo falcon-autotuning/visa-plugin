@@ -53,6 +53,55 @@ static ScheduledResponse *find_matching_response(ScpiSimulator *sim,
 
   return NULL;
 }
+static ssize_t transport_write(ScpiSimulator *sim, const void *buf,
+                               size_t size) {
+  ssize_t rc;
+
+  switch (sim->transport_type) {
+
+  case SCPI_TRANSPORT_TCP:
+    rc = send(sim->client_fd, buf, size, 0);
+    break;
+
+  case SCPI_TRANSPORT_SERIAL:
+    rc = write(sim->serial_fd, buf, size);
+    break;
+
+  default:
+    return -1;
+  }
+
+  if (rc < 0) {
+    fprintf(stderr, "transport_write failed: errno=%d (%s)\n", errno,
+            strerror(errno));
+  }
+
+  return rc;
+}
+static ssize_t transport_read(ScpiSimulator *sim, void *buf, size_t size) {
+  ssize_t rc;
+
+  switch (sim->transport_type) {
+
+  case SCPI_TRANSPORT_TCP:
+    rc = recv(sim->client_fd, buf, size, 0);
+    break;
+
+  case SCPI_TRANSPORT_SERIAL:
+    rc = read(sim->serial_fd, buf, size);
+    break;
+
+  default:
+    return -1;
+  }
+
+  if (rc < 0) {
+    fprintf(stderr, "transport_read failed: errno=%d (%s)\n", errno,
+            strerror(errno));
+  }
+
+  return rc;
+}
 
 static void handle_command(ScpiSimulator *sim, const char *raw_command) {
   char command[SCPI_RECV_BUFFER_SIZE];
@@ -70,7 +119,10 @@ static void handle_command(ScpiSimulator *sim, const char *raw_command) {
   if (r != NULL) {
     r->hit_count++;
 
-    send(sim->client_fd, r->response, strlen(r->response), 0);
+    sim->total_commands_handled++;
+    pthread_cond_broadcast(&sim->command_cond);
+
+    transport_write(sim, r->response, strlen(r->response));
 
     if (!r->persistent) {
       r->consumed = true;
@@ -91,8 +143,7 @@ static bool ends_with(const char *str, const char *suffix) {
 
   return strcmp(str + str_len - suffix_len, suffix) == 0;
 }
-
-static void *scpi_worker(void *arg) {
+static bool tcp_setup(void *arg) {
   ScpiSimulator *sim = (ScpiSimulator *)arg;
 
   struct sockaddr_in addr;
@@ -140,11 +191,11 @@ static void *scpi_worker(void *arg) {
     }
 
     perror("accept");
-    return NULL;
+    return false;
   }
 
   if (!sim->running) {
-    return NULL;
+    return false;
   }
 
   pthread_mutex_lock(&sim->mutex);
@@ -154,21 +205,56 @@ static void *scpi_worker(void *arg) {
   pthread_cond_broadcast(&sim->connected_cond);
 
   pthread_mutex_unlock(&sim->mutex);
+  return true;
+}
+static bool serial_setup(ScpiSimulator *sim) {
+  sim->serial_fd = open(sim->serial_device, O_RDWR | O_NOCTTY);
+
+  if (sim->serial_fd < 0) {
+    perror("open serial");
+    return false;
+  }
+
+  pthread_mutex_lock(&sim->mutex);
+
+  sim->server_ready = true;
+  sim->client_connected = true;
+
+  pthread_cond_broadcast(&sim->ready_cond);
+  pthread_cond_broadcast(&sim->connected_cond);
+
+  pthread_mutex_unlock(&sim->mutex);
+
+  return true;
+}
+static void *scpi_worker(void *arg) {
+  ScpiSimulator *sim = arg;
+
+  if (sim->transport_type == SCPI_TRANSPORT_TCP) {
+    if (!tcp_setup(sim)) {
+      return NULL;
+    }
+  } else {
+    if (!serial_setup(sim)) {
+      return NULL;
+    }
+  }
 
   char recv_buffer[SCPI_RECV_BUFFER_SIZE];
-
   char command_buffer[SCPI_RECV_BUFFER_SIZE];
 
   size_t command_len = 0;
 
   while (sim->running) {
-    ssize_t bytes = recv(sim->client_fd, recv_buffer, sizeof(recv_buffer), 0);
+
+    ssize_t bytes = transport_read(sim, recv_buffer, sizeof(recv_buffer));
 
     if (bytes <= 0) {
       break;
     }
 
     for (ssize_t i = 0; i < bytes; ++i) {
+
       char c = recv_buffer[i];
 
       if (command_len >= sizeof(command_buffer) - 1) {
@@ -190,13 +276,47 @@ static void *scpi_worker(void *arg) {
   return NULL;
 }
 
-void scpi_simulator_start(ScpiSimulator *sim, uint16_t port,
-                          const char *command_terminator) {
+void scpi_simulator_start_tcp(ScpiSimulator *sim, uint16_t port,
+                              const char *command_terminator) {
   memset(sim, 0, sizeof(*sim));
 
+  sim->transport_type = SCPI_TRANSPORT_TCP;
   sim->port = port;
   snprintf(sim->command_terminator, sizeof(sim->command_terminator), "%s",
            command_terminator);
+
+  sim->server_fd = -1;
+  sim->client_fd = -1;
+
+  pthread_mutex_init(&sim->mutex, NULL);
+
+  pthread_cond_init(&sim->ready_cond, NULL);
+
+  pthread_cond_init(&sim->connected_cond, NULL);
+
+  sim->running = true;
+
+  int rc = pthread_create(&sim->thread, NULL, scpi_worker, sim);
+
+  assert(rc == 0);
+
+  pthread_mutex_lock(&sim->mutex);
+
+  while (!sim->server_ready) {
+    pthread_cond_wait(&sim->ready_cond, &sim->mutex);
+  }
+
+  pthread_mutex_unlock(&sim->mutex);
+}
+
+void scpi_simulator_start_serial(ScpiSimulator *sim, const char *serial_device,
+                                 const char *command_terminator) {
+  memset(sim, 0, sizeof(*sim));
+
+  sim->transport_type = SCPI_TRANSPORT_SERIAL;
+  snprintf(sim->command_terminator, sizeof(sim->command_terminator), "%s",
+           command_terminator);
+  snprintf(sim->serial_device, sizeof(sim->serial_device), "%s", serial_device);
 
   sim->server_fd = -1;
   sim->client_fd = -1;
@@ -227,18 +347,19 @@ void scpi_simulator_stop(ScpiSimulator *sim) {
 
   if (sim->client_fd >= 0) {
     shutdown(sim->client_fd, SHUT_RDWR);
-
     close(sim->client_fd);
-
     sim->client_fd = -1;
   }
 
   if (sim->server_fd >= 0) {
     shutdown(sim->server_fd, SHUT_RDWR);
-
     close(sim->server_fd);
-
     sim->server_fd = -1;
+  }
+
+  if (sim->serial_fd >= 0) {
+    close(sim->serial_fd);
+    sim->serial_fd = -1;
   }
 
   pthread_join(sim->thread, NULL);
@@ -351,4 +472,21 @@ bool scpi_simulator_client_connected(ScpiSimulator *sim) {
   pthread_mutex_unlock(&sim->mutex);
 
   return result;
+}
+
+bool scpi_simulator_wait_for_hits(ScpiSimulator *sim, const char *command,
+                                  size_t expected_hits, uint32_t timeout_ms) {
+  const uint32_t sleep_ms = 1;
+
+  for (uint32_t elapsed = 0; elapsed < timeout_ms; elapsed += sleep_ms) {
+    if (scpi_simulator_hits(sim, command) >= expected_hits) {
+      return true;
+    }
+
+    usleep(sleep_ms * 1000);
+  }
+  return false;
+}
+const char *scpi_simulator_serial_device(ScpiSimulator *sim) {
+  return sim->serial_device;
 }
