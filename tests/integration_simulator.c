@@ -239,6 +239,7 @@ static void test_back_to_back_query(void **state) {
 }
 
 static void test_double_set_then_query(void **state) {
+  // This test is harder to pass on ni-visa than rsvisa
   VisaTestContext *ctx = *state;
 
   scpi_simulator_expect_persistent(&ctx->sim, "SET", "\n");
