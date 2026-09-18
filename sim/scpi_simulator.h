@@ -19,6 +19,7 @@ typedef struct {
   char response[SCPI_MAX_RESPONSE_LEN];
 
   bool persistent;
+  uint64_t time_delay_us;
 } ScheduledResponse;
 typedef enum { SCPI_TRANSPORT_TCP, SCPI_TRANSPORT_SERIAL } ScpiTransportType;
 
@@ -44,6 +45,7 @@ typedef struct {
 typedef struct {
   ScpiTransportType transport_type;
   WorkerState worker;
+  pthread_mutex_t write_mutex;
 
   pid_t child_pid;
   ScpiSharedState *shared;
@@ -77,11 +79,18 @@ void scpi_simulator_stop(ScpiSimulator *sim);
 void scpi_simulator_expect(ScpiSimulator *sim, const char *command,
                            const char *response);
 
+void scpi_simulator_expect_delayed(ScpiSimulator *sim, const char *command,
+                                   const char *response, uint64_t delay_us);
+
 /*
  * Persistent response.
  */
 void scpi_simulator_expect_persistent(ScpiSimulator *sim, const char *command,
                                       const char *response);
+void scpi_simulator_expect_persistent_delayed(ScpiSimulator *sim,
+                                              const char *command,
+                                              const char *response,
+                                              uint64_t delay_us);
 
 /*
  * Wait until VISA client connects.

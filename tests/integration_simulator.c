@@ -273,6 +273,41 @@ static void test_double_set_then_query(void **state) {
   assert_int_equal(scpi_simulator_hits(&ctx->sim, "SET"), 2);
   dump_simulator_log(&ctx->sim);
 }
+static void test_double_set_then_query_delay(void **state) {
+  // This test is harder to pass on ni-visa than rsvisa
+  VisaTestContext *ctx = *state;
+
+  scpi_simulator_expect_persistent_delayed(&ctx->sim, "SET", "\n", 1000);
+  scpi_simulator_expect_delayed(&ctx->sim, "GET_VOLT", "5.255555\n", 100000);
+
+  assert_int_equal(plugin_initialize(&ctx->config), 0);
+  PluginCommand cmd1 = {0};
+  snprintf(cmd1.command, sizeof(cmd1.command), "SET");
+  cmd1.is_query = false;
+  cmd1.timeout_ms = 1000;
+  PluginResponse *resp1 = plugin_response_create();
+  assert_int_equal(plugin_execute_command(&cmd1, resp1), 0);
+  assert_int_equal(plugin_execute_command(&cmd1, resp1), 0);
+
+  PluginCommand cmd2 = {0};
+  snprintf(cmd2.command, sizeof(cmd2.command), "GET_VOLT");
+  cmd2.is_query = true;
+  cmd2.timeout_ms = 1000;
+  PluginResponse *resp2 = plugin_response_create();
+  assert_int_equal(plugin_execute_command(&cmd2, resp2), 0);
+  {
+    assert_int_equal(plugin_response_count(resp2), 1);
+    const Variable *v = plugin_response_get(resp2, 0);
+    assert_non_null(v);
+    assert_int_equal(v->type, PARAM_TYPE_DOUBLE);
+    assert_double_equal(v->value.d_val, 5.255555, EPSILON);
+  }
+  plugin_response_free(resp1);
+  plugin_response_free(resp2);
+  assert_true(scpi_simulator_wait_for_hits(&ctx->sim, "GET_VOLT", 1, 1000));
+  assert_int_equal(scpi_simulator_hits(&ctx->sim, "SET"), 2);
+  dump_simulator_log(&ctx->sim);
+}
 typedef struct {
   CMUnitTestFunction test;
   const char *name;
@@ -285,6 +320,7 @@ static const TestCase TEST_CASES[] = {
     {test_set, "test-set"},
     {test_double_set, "test_double_set"},
     {test_double_set_then_query, "test_double_set_then_query"},
+    {test_double_set_then_query_delay, "test_double_set_then_query_delay"},
 };
 int main(void) {
   const size_t num_tests = sizeof(TEST_CASES) / sizeof(TEST_CASES[0]);

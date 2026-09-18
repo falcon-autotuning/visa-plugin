@@ -116,6 +116,32 @@ static uint64_t get_time_us(void) {
   return ((uint64_t)ts.tv_sec * 1000000ULL) + ((uint64_t)ts.tv_nsec / 1000ULL);
 #endif
 }
+typedef struct {
+  ScpiSimulator *sim;
+  ScheduledResponse response;
+  size_t idx;
+} ResponseTask;
+static void *response_thread(void *arg) {
+  ResponseTask *task = arg;
+
+  if (task->response.time_delay_us > 0) {
+    usleep((useconds_t)task->response.time_delay_us);
+  }
+
+  fprintf(stderr, "[%llu us] actually sending response '%s'\n",
+          (unsigned long long)get_time_us(), task->response.response);
+
+  pthread_mutex_lock(&task->sim->write_mutex);
+
+  transport_write(task->sim, task->response.response,
+                  strlen(task->response.response));
+
+  pthread_mutex_unlock(&task->sim->write_mutex);
+
+  free(task);
+
+  return NULL;
+}
 
 static void handle_command(ScpiSimulator *sim, const char *raw_command) {
   uint64_t start = get_time_us();
@@ -135,10 +161,19 @@ static void handle_command(ScpiSimulator *sim, const char *raw_command) {
     sim->shared->hit_counts[idx]++;
 
     sim->shared->total_commands_handled++;
-    uint64_t before_send = get_time_us();
-    fprintf(stderr, "[%llu us] sending response '%s'\n",
-            (unsigned long long)before_send, r->response);
-    transport_write(sim, r->response, strlen(r->response));
+    pthread_t tid;
+
+    ResponseTask *task = malloc(sizeof(*task));
+
+    task->sim = sim;
+    task->response = *r;
+    task->idx = idx;
+    if (pthread_create(&tid, NULL, response_thread, task) == 0) {
+      pthread_detach(tid);
+
+    } else {
+      free(task);
+    }
 
     if (!r->persistent) {
       sim->shared->consumed[idx] = true;
@@ -265,6 +300,7 @@ void scpi_simulator_start_tcp(ScpiSimulator *sim, uint16_t port,
                               const char *command_terminator) {
   memset(sim, 0, sizeof(*sim));
   sim->transport_type = SCPI_TRANSPORT_TCP;
+  pthread_mutex_init(&sim->write_mutex, NULL);
   sim->port = port;
   snprintf(sim->command_terminator, sizeof(sim->command_terminator), "%s",
            command_terminator);
@@ -291,6 +327,7 @@ void scpi_simulator_start_serial(ScpiSimulator *sim, const char *serial_device,
                                  const char *command_terminator) {
   memset(sim, 0, sizeof(*sim));
   sim->transport_type = SCPI_TRANSPORT_SERIAL;
+  pthread_mutex_init(&sim->write_mutex, NULL);
   snprintf(sim->command_terminator, sizeof(sim->command_terminator), "%s",
            command_terminator);
   snprintf(sim->serial_device, sizeof(sim->serial_device), "%s", serial_device);
@@ -315,6 +352,7 @@ void scpi_simulator_start_serial(ScpiSimulator *sim, const char *serial_device,
 
 void scpi_simulator_stop(ScpiSimulator *sim) {
   sim->shared->running = false;
+  pthread_mutex_destroy(&sim->write_mutex);
 
   if (sim->worker.client_fd >= 0) {
     shutdown(sim->worker.client_fd, SHUT_RDWR);
@@ -359,6 +397,19 @@ void scpi_simulator_expect(ScpiSimulator *sim, const char *command,
   r->persistent = false;
 }
 
+void scpi_simulator_expect_delayed(ScpiSimulator *sim, const char *command,
+                                   const char *response, uint64_t delay_us) {
+
+  assert(sim->shared->response_count < SCPI_MAX_RESPONSES);
+
+  ScheduledResponse *r = &sim->shared->responses[sim->shared->response_count++];
+  snprintf(r->command, sizeof(r->command), "%s", command);
+  snprintf(r->response, sizeof(r->response), "%s", response);
+
+  r->persistent = false;
+  r->time_delay_us = delay_us;
+}
+
 void scpi_simulator_expect_persistent(ScpiSimulator *sim, const char *command,
                                       const char *response) {
 
@@ -370,6 +421,21 @@ void scpi_simulator_expect_persistent(ScpiSimulator *sim, const char *command,
   snprintf(r->response, sizeof(r->response), "%s", response);
 
   r->persistent = true;
+}
+void scpi_simulator_expect_persistent_delayed(ScpiSimulator *sim,
+                                              const char *command,
+                                              const char *response,
+                                              uint64_t delay_us) {
+
+  assert(sim->shared->response_count < SCPI_MAX_RESPONSES);
+
+  ScheduledResponse *r = &sim->shared->responses[sim->shared->response_count++];
+
+  snprintf(r->command, sizeof(r->command), "%s", command);
+  snprintf(r->response, sizeof(r->response), "%s", response);
+
+  r->persistent = true;
+  r->time_delay_us = delay_us;
 }
 
 void scpi_simulator_wait_for_connection(ScpiSimulator *sim) {
