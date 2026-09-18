@@ -38,6 +38,7 @@ typedef struct {
   char multi_arg_delimiter[MAX_TERMINATION_LEN];
   char high_bool[MAX_TERMINATION_LEN];
   char low_bool[MAX_TERMINATION_LEN];
+  bool sets_acknowledgement;
   bool initialized;
 } VISAPluginState;
 
@@ -152,6 +153,7 @@ uint8_t plugin_initialize(const PluginConfig *config) {
   const char *multi_arg_delimiter = ",";
   const char *high_bool = "ON";
   const char *low_bool = "OFF";
+  const char *returns_acks = "OFF";
 
   cJSON *custom_json = cJSON_Parse(config->custom);
   VISA_LOG_TRACE("The custom field contains %s", config->custom);
@@ -163,6 +165,7 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     multi_arg_delimiter = get_json_string(custom_json, "arg_d", ",");
     high_bool = get_json_string(custom_json, "h_bool", "ON");
     low_bool = get_json_string(custom_json, "l_bool", "OFF");
+    returns_acks = get_json_string(custom_json, "acks", "OFF");
   }
   if (strlen(term) >= MAX_TERMINATION_LEN) {
     VISA_LOG_ERROR("The selected termination for the instrument is too long");
@@ -178,6 +181,13 @@ uint8_t plugin_initialize(const PluginConfig *config) {
         "The selected custom timeout for the instrument in milliseconds is %d",
         g_state.timeout_ms);
   }
+  g_state.sets_acknowledgement = false;
+  if (strcmp(returns_acks, "ON") == 0) {
+    g_state.sets_acknowledgement = true;
+  }
+  VISA_LOG_DEBUG("The selected acknowledgement setting is %s",
+                 g_state.sets_acknowledgement ? "to acknowledge sets"
+                                              : "to not acknowledge sets");
 
   if (strcmp(term, "\\n") == 0) {
     term = "\n";
@@ -274,21 +284,8 @@ uint8_t plugin_initialize(const PluginConfig *config) {
 
   viGetAttribute(g_state.instrument, VI_ATTR_INTF_NUM, &intf_num);
 
-  VISA_LOG_WARN("type=%u num=%u", intf_type, intf_num);
-  status = viSetAttribute(g_state.instrument, VI_ATTR_ASRL_DATA_BITS, 8);
-  ViChar description[256] = {0};
-  viStatusDesc(g_state.default_rm, status, description);
-  VISA_LOG_WARN("data bits status=%d desc=%s", status, description);
+  VISA_LOG_DEBUG("type=%u num=%u", intf_type, intf_num);
 
-  status = viSetAttribute(g_state.instrument, VI_ATTR_ASRL_STOP_BITS,
-                          VI_ASRL_STOP_ONE);
-
-  VISA_LOG_WARN("stop bits status=0x%08X", status);
-
-  status =
-      viSetAttribute(g_state.instrument, VI_ATTR_ASRL_PARITY, VI_ASRL_PAR_NONE);
-
-  VISA_LOG_WARN("parity status=0x%08X", status);
   // configure the instrument baud_rate
   status =
       viSetAttribute(g_state.instrument, VI_ATTR_ASRL_BAUD, config->baud_rate);
@@ -411,13 +408,18 @@ static int visa_read_buffer(char **out_buf, size_t *out_len,
 
     if (chunk_read > 0) {
       total_read += chunk_read;
-      // > term_len ensures something is read other than a termination
-      if (total_read > term_len &&
-          memcmp(buffer + total_read - term_len, g_state.termination_char,
-                 term_len) == 0) {
+
+      bool complete = g_state.sets_acknowledgement ? (total_read >= term_len)
+                                                   : (total_read > term_len);
+
+      if (complete && memcmp(buffer + total_read - term_len,
+                             g_state.termination_char, term_len) == 0) {
+
         VISA_LOG_TRACE("Termination detected, total_read=%zu", total_read);
+
         total_read -= term_len;
         buffer[total_read] = '\0';
+
         VISA_LOG_TRACE("Final buffer: '%s'", buffer);
         VISA_LOG_TRACE("Final buffer length: %zu", total_read);
 
@@ -754,10 +756,10 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
   }
 
   viSetAttribute(g_state.instrument, VI_ATTR_TMO_VALUE, VISA_READ_POLL_MS);
-  if (cmd->is_query) {
-    VISA_LOG_WARN("flush starting at %llu", (unsigned long long)get_time_us());
+  if (cmd->is_query || g_state.sets_acknowledgement) {
+    VISA_LOG_TRACE("flush starting at %llu", (unsigned long long)get_time_us());
     ViStatus status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
-    VISA_LOG_WARN("flush finished at %llu", (unsigned long long)get_time_us());
+    VISA_LOG_TRACE("flush finished at %llu", (unsigned long long)get_time_us());
     if (status < VI_SUCCESS) {
       ViChar description[256] = {0};
       viStatusDesc(g_state.default_rm, status, description);
@@ -769,15 +771,15 @@ uint8_t plugin_execute_command(const PluginCommand *cmd, PluginResponse *resp) {
     VISA_LOG_ERROR("Failed to execute write command %s", cmd->command);
     return 1;
   }
-  VISA_LOG_WARN("write finished at %llu", (unsigned long long)get_time_us());
+  VISA_LOG_TRACE("write finished at %llu", (unsigned long long)get_time_us());
   char *buffer = NULL;
   size_t read_len = 0;
-  VISA_LOG_WARN("Preparing response for command %s", cmd->command);
+  VISA_LOG_TRACE("Preparing response for command %s", cmd->command);
   uint32_t timeout_ms =
       (g_state.timeout_ms > 0) ? g_state.timeout_ms : cmd->timeout_ms;
-  if (cmd->is_query) {
+  if (cmd->is_query || g_state.sets_acknowledgement) {
     VISA_LOG_DEBUG("Is a query, awaiting %d ms for the response", timeout_ms);
-    VISA_LOG_WARN("starting read at %llu", (unsigned long long)get_time_us());
+    VISA_LOG_TRACE("starting read at %llu", (unsigned long long)get_time_us());
     if (visa_read_buffer(&buffer, &read_len, timeout_ms) != 0) {
       VISA_LOG_ERROR("VISA read failed");
       free(buffer);

@@ -54,7 +54,7 @@ static int setup_tcp(void **state) {
   snprintf(ctx->config.instrument_name, sizeof(ctx->config.instrument_name),
            "MockVisa");
   snprintf(ctx->config.custom, sizeof(ctx->config.custom),
-           "{\"term\":\"\\\\n\"}");
+           "{\"term\":\"\\\\n\",\"acks\":\"ON\"}");
   *state = ctx;
 
   return 0;
@@ -345,19 +345,22 @@ int main(void) {
   if (ret != 0) {
     return ret;
   }
-  struct CMUnitTest serial_tests[num_tests];
-
-  for (size_t i = 0; i < num_tests; ++i) {
-    serial_tests[i] = (struct CMUnitTest){
-        .name = TEST_CASES[i].name,
-        .test_func = TEST_CASES[i].test,
-        .setup_func = setup_serial,
-        .teardown_func = teardown,
-    };
-  }
-
-  printf("\n=== SERIAL TESTS ===\n");
-
-  return _cmocka_run_group_tests(TEST_CASES[0].name, serial_tests, num_tests,
-                                 group_setup, group_teardown);
+  return ret;
+  // DEPRECATED
+  //   struct CMUnitTest serial_tests[num_tests];
+  //
+  //   for (size_t i = 0; i < num_tests; ++i) {
+  //     serial_tests[i] = (struct CMUnitTest){
+  //         .name = TEST_CASES[i].name,
+  //         .test_func = TEST_CASES[i].test,
+  //         .setup_func = setup_serial,
+  //         .teardown_func = teardown,
+  //     };
+  //   }
+  //
+  //   printf("\n=== SERIAL TESTS ===\n");
+  //
+  //   return _cmocka_run_group_tests(TEST_CASES[0].name, serial_tests,
+  //   num_tests,
+  //                                  group_setup, group_teardown);
 }

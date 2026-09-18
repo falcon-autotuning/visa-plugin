@@ -38,6 +38,7 @@ These are optionally passed in through the custom field in the instrument config
 **arg_d** : the argument delimiter character(s). If not specified, the default argument delimiter is a space character. This is used to parse command arguments sent to the instrument.
 **h_bool** : the argument defining a High boolean
 **l_bool** : the argument defining a Low boolean
+**acks** : if the instrument returns acknowledgments on SET only commands "ON", else "OFF"
 
 ---
 
@@ -84,44 +85,6 @@ Tests are implemented using `cmocka` and validate:
 ```bash
 ctest --output-on-failure
 ```
-
-Critically there are special integration tests that require root access. Before running
-
-```bash
-make test
-```
-
-Either follow the steps or do
-
-```bash
-make setup-serial-test
-```
-
-Serial test setup (Linux)
-
-1. Install tty0tty
-
-2. Create virtual null modem pair
-
-    sudo modprobe tty0tty
-
-3. Make devices accessible
-
-    sudo chmod 666 /dev/tnt0 /dev/tnt1
-
-4. Present one endpoint as a VISA-compatible USB serial device
-
-    sudo ln -sf /dev/tnt0 /dev/ttyUSB0
-
-5. Run tests
-
-    make test PRESET=linux-clang-release
-
-## Notes
-
-- All array responses are routed through the shared buffer system
-- The Linux stub is intended for development and testing only
-- Real instrument communication requires a full VISA implementation (e.g. NI-VISA)
 
 ***
 

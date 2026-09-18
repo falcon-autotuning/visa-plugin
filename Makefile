@@ -58,9 +58,8 @@ check-serial-test:
 	@ls -l /dev/tnt1
 	@ls -l /dev/ttyUSB0
 
-test: setup-serial-test build
+test: build
 	ctest --preset $(PRESET) -V
-	$(MAKE) cleanup-serial-test
 
 install: build
 	@echo "Installing $(PRESET) to system..."

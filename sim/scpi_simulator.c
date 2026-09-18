@@ -1,6 +1,7 @@
 #include "scpi_simulator.h"
 
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
@@ -133,8 +134,11 @@ static void *response_thread(void *arg) {
 
   pthread_mutex_lock(&task->sim->write_mutex);
 
-  transport_write(task->sim, task->response.response,
-                  strlen(task->response.response));
+  for (size_t i = 0; i < strlen(task->response.response); ++i) {
+    transport_write(task->sim, &task->response.response[i], 1);
+
+    usleep(1000);
+  }
 
   pthread_mutex_unlock(&task->sim->write_mutex);
 
@@ -222,6 +226,10 @@ static bool tcp_setup(void *arg) {
           (unsigned long long)get_time_us());
 
   sim->worker.client_fd = accept(sim->worker.server_fd, NULL, NULL);
+  int one = 1;
+
+  setsockopt(sim->worker.client_fd, IPPROTO_TCP, TCP_NODELAY, &one,
+             sizeof(one));
 
   if (sim->worker.client_fd < 0) {
     perror("accept");
