@@ -6,6 +6,7 @@
 typedef int32_t ViStatus;
 typedef void *ViSession;
 typedef uint32_t ViUInt32;
+typedef uint16_t ViUInt16;
 typedef uint32_t ViAttr;
 typedef unsigned char *ViBuf;
 typedef char ViChar;
@@ -19,7 +20,14 @@ typedef void *ViObject;
 
 #define VI_NO_LOCK 0
 #define VI_ATTR_TMO_VALUE 0x3FFF001A
+#define VI_ATTR_INTF_TYPE 5
+#define VI_ATTR_INTF_NUM 6
+#define VI_ASRL_STOP_ONE 66
 #define VI_ATTR_ASRL_BAUD 0x3FFF001B
+#define VI_ATTR_ASRL_DATA_BITS 0x3FFF001C
+#define VI_ATTR_ASRL_STOP_BITS 0x3FFF001D
+#define VI_ATTR_ASRL_PARITY 2
+#define VI_ASRL_PAR_NONE 1
 
 #define VI_ERROR_TMO 10
 
@@ -29,6 +37,7 @@ ViStatus viOpen(ViSession rm, const char *addr, uint32_t mode, uint32_t timeout,
                 ViSession *instr);
 
 ViStatus viSetAttribute(ViSession instr, ViAttr attr, uint32_t val);
+ViStatus viGetAttribute(ViSession instr, ViAttr attr, ViUInt16 *loc);
 
 ViStatus viWrite(ViSession instr, ViBuf buf, ViUInt32 count, ViUInt32 *written);
 

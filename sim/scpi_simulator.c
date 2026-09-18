@@ -299,6 +299,10 @@ static void scpi_worker(ScpiSimulator *sim) {
 void scpi_simulator_start_tcp(ScpiSimulator *sim, uint16_t port,
                               const char *command_terminator) {
   memset(sim, 0, sizeof(*sim));
+
+  sim->worker.server_fd = -1;
+  sim->worker.client_fd = -1;
+  sim->worker.serial_fd = -1;
   sim->transport_type = SCPI_TRANSPORT_TCP;
   pthread_mutex_init(&sim->write_mutex, NULL);
   sim->port = port;
@@ -326,6 +330,10 @@ void scpi_simulator_start_tcp(ScpiSimulator *sim, uint16_t port,
 void scpi_simulator_start_serial(ScpiSimulator *sim, const char *serial_device,
                                  const char *command_terminator) {
   memset(sim, 0, sizeof(*sim));
+
+  sim->worker.server_fd = -1;
+  sim->worker.client_fd = -1;
+  sim->worker.serial_fd = -1;
   sim->transport_type = SCPI_TRANSPORT_SERIAL;
   pthread_mutex_init(&sim->write_mutex, NULL);
   snprintf(sim->command_terminator, sizeof(sim->command_terminator), "%s",
@@ -354,21 +362,18 @@ void scpi_simulator_stop(ScpiSimulator *sim) {
   sim->shared->running = false;
   pthread_mutex_destroy(&sim->write_mutex);
 
-  if (sim->worker.client_fd >= 0) {
+  if (sim->worker.client_fd > 2) {
     shutdown(sim->worker.client_fd, SHUT_RDWR);
     close(sim->worker.client_fd);
-    sim->worker.client_fd = -1;
   }
 
-  if (sim->worker.server_fd >= 0) {
+  if (sim->worker.server_fd > 2) {
     shutdown(sim->worker.server_fd, SHUT_RDWR);
     close(sim->worker.server_fd);
-    sim->worker.server_fd = -1;
   }
 
-  if (sim->worker.serial_fd >= 0) {
+  if (sim->worker.serial_fd > 2) {
     close(sim->worker.serial_fd);
-    sim->worker.serial_fd = -1;
   }
   sim->shared->running = false;
 

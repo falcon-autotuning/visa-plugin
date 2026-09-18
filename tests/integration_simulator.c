@@ -63,8 +63,9 @@ static int setup_serial(void **state) {
   VisaTestContext *ctx = calloc(1, sizeof(*ctx));
   assert_non_null(ctx);
 
-  scpi_simulator_start_serial(&ctx->sim, "/dev/ttyUSB0", "\n");
-  snprintf(ctx->config.address, sizeof(ctx->config.address), "ASRL0::INSTR");
+  scpi_simulator_start_serial(&ctx->sim, "/dev/tnt1", "\n");
+  snprintf(ctx->config.address, sizeof(ctx->config.address), "ASRL10::INSTR");
+  ctx->config.baud_rate = 9600;
   snprintf(ctx->config.instrument_name, sizeof(ctx->config.instrument_name),
            "MockVisa");
   snprintf(ctx->config.custom, sizeof(ctx->config.custom),
@@ -344,21 +345,19 @@ int main(void) {
   if (ret != 0) {
     return ret;
   }
-  return ret;
-  // DEPRECATED
-  // struct CMUnitTest serial_tests[num_tests];
-  //
-  // for (size_t i = 0; i < num_tests; ++i) {
-  //   serial_tests[i] = (struct CMUnitTest){
-  //       .name = TEST_CASES[i].name,
-  //       .test_func = TEST_CASES[i].test,
-  //       .setup_func = setup_serial,
-  //       .teardown_func = teardown,
-  //   };
-  // }
-  //
-  // printf("\n=== SERIAL TESTS ===\n");
-  //
-  // return _cmocka_run_group_tests(TEST_CASES[0].name, serial_tests, num_tests,
-  //                                group_setup, group_teardown);
+  struct CMUnitTest serial_tests[num_tests];
+
+  for (size_t i = 0; i < num_tests; ++i) {
+    serial_tests[i] = (struct CMUnitTest){
+        .name = TEST_CASES[i].name,
+        .test_func = TEST_CASES[i].test,
+        .setup_func = setup_serial,
+        .teardown_func = teardown,
+    };
+  }
+
+  printf("\n=== SERIAL TESTS ===\n");
+
+  return _cmocka_run_group_tests(TEST_CASES[0].name, serial_tests, num_tests,
+                                 group_setup, group_teardown);
 }

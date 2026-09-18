@@ -36,9 +36,31 @@ build: configure
 	@echo "Building $(PRESET)..."
 	cmake --build --preset $(PRESET)
 
-test: build
-	@echo "Running tests for $(PRESET)..."
-	ctest --preset $(PRESET) -V 
+.PHONY: setup-serial-test cleanup-serial-test
+setup-serial-test:
+	@echo "Setting up tty0tty serial test environment..."
+	sudo modprobe tty0tty
+	sudo chmod 666 /dev/tnt0 /dev/tnt1
+	sudo ln -sf /dev/tnt0 /dev/ttyUSB0
+	@echo "Serial simulator ready:"
+	@echo "  VISA side:      /dev/ttyUSB0"
+	@echo "  Simulator side: /dev/tnt1"
+
+cleanup-serial-test:
+	@echo "Cleaning up tty0tty serial test environment..."
+	sudo rm -f /dev/ttyUSB0
+	-sudo chmod 660 /dev/tnt0 /dev/tnt1
+	-sudo modprobe -r tty0tty
+	@echo "Serial simulator cleanup complete"
+
+check-serial-test:
+	@ls -l /dev/tnt0
+	@ls -l /dev/tnt1
+	@ls -l /dev/ttyUSB0
+
+test: setup-serial-test build
+	ctest --preset $(PRESET) -V
+	$(MAKE) cleanup-serial-test
 
 install: build
 	@echo "Installing $(PRESET) to system..."

@@ -124,7 +124,8 @@ static size_t write_to_instrument(const char *command) {
 write_error: {
   ViChar description[256] = {0};
   viStatusDesc(g_state.default_rm, status, description);
-  VISA_LOG_ERROR("Write failed: %s", description);
+  VISA_LOG_ERROR("viWrite(command='%s') returned status=%ld (0x%08lX): %s",
+                 command, (long)status, (unsigned long)status, description);
   return 1;
 }
 }
@@ -266,15 +267,36 @@ uint8_t plugin_initialize(const PluginConfig *config) {
     g_state.default_rm = VI_NULL;
     return 1;
   }
+  ViUInt16 intf_type;
+  ViUInt16 intf_num;
 
+  viGetAttribute(g_state.instrument, VI_ATTR_INTF_TYPE, &intf_type);
+
+  viGetAttribute(g_state.instrument, VI_ATTR_INTF_NUM, &intf_num);
+
+  VISA_LOG_WARN("type=%u num=%u", intf_type, intf_num);
+  status = viSetAttribute(g_state.instrument, VI_ATTR_ASRL_DATA_BITS, 8);
+  ViChar description[256] = {0};
+  viStatusDesc(g_state.default_rm, status, description);
+  VISA_LOG_WARN("data bits status=%d desc=%s", status, description);
+
+  status = viSetAttribute(g_state.instrument, VI_ATTR_ASRL_STOP_BITS,
+                          VI_ASRL_STOP_ONE);
+
+  VISA_LOG_WARN("stop bits status=0x%08X", status);
+
+  status =
+      viSetAttribute(g_state.instrument, VI_ATTR_ASRL_PARITY, VI_ASRL_PAR_NONE);
+
+  VISA_LOG_WARN("parity status=0x%08X", status);
   // configure the instrument baud_rate
   status =
       viSetAttribute(g_state.instrument, VI_ATTR_ASRL_BAUD, config->baud_rate);
   if (status < VI_SUCCESS) {
     ViChar description[256] = {0};
     viStatusDesc(g_state.default_rm, status, description);
-    VISA_LOG_WARN("Unable to set baud rate on VISA instrument: %s",
-                  description);
+    VISA_LOG_WARN("Unable to set baud rate on VISA instrument to %d: %s",
+                  config->baud_rate, description);
   }
   status = viFlush(g_state.instrument, VI_IO_IN_BUF_DISCARD);
   if (status < VI_SUCCESS) {
